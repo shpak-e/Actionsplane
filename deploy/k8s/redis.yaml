@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: actionsplane-redis
+  namespace: actionsplane
+spec:
+  selector:
+    app: actionsplane-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actionsplane-redis
+  namespace: actionsplane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: actionsplane-redis
+  template:
+    metadata:
+      labels:
+        app: actionsplane-redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }

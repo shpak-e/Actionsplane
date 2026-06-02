@@ -1,0 +1,32 @@
+# Runs Alembic migrations once. Apply this and wait for completion before the app Deployments
+# (or use a Helm pre-install/pre-upgrade hook). Re-running is safe (no-op when already at head).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: actionsplane-migrate
+  namespace: actionsplane
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: actionsplane-migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command: ["sh", "-c", "until pg_isready -h actionsplane-postgres -U actionsplane; do echo waiting; sleep 2; done"]
+      containers:
+        - name: migrate
+          image: ghcr.io/itamar/actionsplane-api:0.1.0  # same image as the api
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef: { name: actionsplane-config }
+            - secretRef: { name: actionsplane-secrets }
+          resources:
+            requests: { cpu: "50m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }

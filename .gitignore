@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+pytest-cache-files-*/
+.ruff_cache/
+.venv-validate/
+
+# uv
+uv.lock.tmp
+
+# node / frontend build (frontend/ has its own .gitignore too)
+node_modules/
+frontend/dist/
+
+# local seed DB (scripts/seed_local.py with the sqlite option)
+*.db
+*.sqlite
+*.sqlite3
+
+# generated HTML (rendered from the .md by the portfolio doc tooling — source is the .md)
+README.html
+plan.html
+docs/*.html
+deploy/**/*.html
+
+# secrets — GitHub App private key never lands in the repo
+*.pem
+.env
+.env.*
+!.env.example
+
+# tooling
+.mise.local.toml
+*.log
+
+# OS
+.DS_Store

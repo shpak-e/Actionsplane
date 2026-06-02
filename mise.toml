@@ -1,0 +1,10 @@
+# Pinned tool versions so CI and laptop match. `mise install` to provision.
+[tools]
+python = "3.12"
+uv = "0.5"
+ruff = "0.8"
+
+[env]
+# Local dev defaults; override in .mise.local.toml (gitignored).
+ACTIONSPLANE_DATABASE_URL = "postgresql+asyncpg://actionsplane:actionsplane@localhost:5432/actionsplane"
+ACTIONSPLANE_REDIS_URL = "redis://localhost:6379/0"

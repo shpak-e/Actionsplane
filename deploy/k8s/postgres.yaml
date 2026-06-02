@@ -1,0 +1,71 @@
+# Self-hosted Postgres for evaluation. In production prefer a managed Postgres (RDS / Cloud SQL)
+# and point ACTIONSPLANE_DATABASE_URL at it instead of running this StatefulSet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: actionsplane-postgres
+  namespace: actionsplane
+spec:
+  clusterIP: None  # headless, for the StatefulSet
+  selector:
+    app: actionsplane-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: actionsplane-postgres
+  namespace: actionsplane
+spec:
+  serviceName: actionsplane-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: actionsplane-postgres
+  template:
+    metadata:
+      labels:
+        app: actionsplane-postgres
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: actionsplane
+            - name: POSTGRES_DB
+              value: actionsplane
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: actionsplane-secrets
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "actionsplane"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

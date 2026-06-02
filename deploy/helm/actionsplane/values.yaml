@@ -1,0 +1,70 @@
+# -- Container image registry + tag shared by the four app images.
+image:
+  registry: ghcr.io/itamar
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Per-component image *name* (under image.registry), replica count, and resources.
+api:
+  imageName: actionsplane-api
+  replicas: 2
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits: { cpu: "1", memory: "512Mi" }
+ingestor:
+  imageName: actionsplane-ingestor
+  replicas: 2
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits: { cpu: "1", memory: "512Mi" }
+worker:
+  # single replica on purpose: arq cron sweeps must not be double-scheduled
+  imageName: actionsplane-worker
+  replicas: 1
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits: { cpu: "1", memory: "512Mi" }
+frontend:
+  imageName: actionsplane-frontend
+  replicas: 2
+  resources:
+    requests: { cpu: "20m", memory: "32Mi" }
+    limits: { cpu: "200m", memory: "128Mi" }
+
+# Non-secret runtime config (rendered into a ConfigMap). REDIS_URL/DB host are derived from
+# the release name in the templates.
+config:
+  githubApiUrl: "https://api.github.com"
+  githubAppPrivateKeyPath: "/secrets/github-app.pem"
+  fetchConcurrency: 8
+  pollIntervalSeconds: 300
+  bulkEditsEnabled: false
+
+# Secrets are referenced by name (created out-of-band: Sealed Secrets / ESO / cloud manager).
+# Keys expected in `existingSecret`: ACTIONSPLANE_DATABASE_URL, POSTGRES_PASSWORD,
+# ACTIONSPLANE_GITHUB_WEBHOOK_SECRET, ACTIONSPLANE_GITHUB_APP_ID, ACTIONSPLANE_API_TOKEN.
+# `existingGithubKeySecret` must contain key `github-app.pem`.
+secrets:
+  existingSecret: actionsplane-secrets
+  existingGithubKeySecret: actionsplane-github-key
+
+# Bundled datastores for evaluation. Disable and use managed services in production.
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  storage: 10Gi
+redis:
+  enabled: true
+  image: redis:7-alpine
+
+# Run the Alembic migration as a pre-install/pre-upgrade hook.
+migrate:
+  enabled: true
+
+ingress:
+  enabled: true
+  className: nginx
+  host: actionsplane.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"

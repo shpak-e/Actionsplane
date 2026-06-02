@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-worker
+  labels: {{- include "actionsplane.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001 }
+      containers:
+        - name: worker
+          image: {{ include "actionsplane.image" (dict "ctx" . "name" .Values.worker.imageName) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom: {{- include "actionsplane.envFrom" . | nindent 12 }}
+          volumeMounts:
+            - { name: github-key, mountPath: /secrets, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext: {{- include "actionsplane.containerSecurity" . | nindent 12 }}
+      volumes:
+        - name: github-key
+          secret: { secretName: {{ .Values.secrets.existingGithubKeySecret }} }
+        - name: tmp
+          emptyDir: {}
