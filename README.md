@@ -2,11 +2,17 @@
 
 > A self-hosted, OSS control plane for **observing, auditing, and editing** GitHub Actions across many repositories from a single UI/API/CLI.
 
+> [!WARNING]
+> **🚧 Work in progress — testing/preview, NOT a production-ready product.**
+> ActionsPlane is under active development and has not yet been validated against a real GitHub org end-to-end. Interfaces, schema, and behaviour may change without notice. **Do not run this against production repositories or rely on it for security-critical workflows.** Use at your own risk, in a sandbox, for evaluation only.
+
 Teams that own many repos juggle four problems no single OSS tool solves end-to-end: status fragmentation (N tabs to see if builds are green), workflow drift (the same workflow copy-pasted everywhere slowly diverges), supply-chain blindness (unpinned actions, over-broad `GITHUB_TOKEN` scopes), and no cross-repo metrics (which repo burns the most minutes? which workflow is flakiest?). ActionsPlane combines the **observe + audit + edit** triangle that existing tools only cover in fragments — and does all edits safely, through PRs.
 
 See [`plan.md`](plan.md) for the full design rationale, differentiation, and phased roadmap, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the runtime view.
 
 ## Status
+
+**⚠️ Testing / preview — not production-ready.** Functionally complete in a local sandbox, but still pending live validation against a real GitHub org (see end of this section). Treat everything below as "works in dev", not "ready to deploy".
 
 **Phases 1–4 functional (v1 feature-complete), v1.1 hardening largely done, + GitLab provider started (v2). 129 tests green; ruff-clean; 9 Alembic migrations.** The docker stack + schema are validated against a real Postgres locally (2026-06-01), and the **React dashboard** (redesigned — Runs / Security / Drift / **Pipelines**, deep links to GitHub Actions, run drawer with job logs + re-run) builds and runs live against the API in `docker-compose.full.yml` (frontend on :3001). The **Pipelines** tab maps the fleet-wide cross-workflow trigger graph (`workflow_run` chains, reusable-workflow calls, cross-repo PR/dispatch) as a **layered left→right flow graph** — repo-coloured node cards, typed/curved connectors, precise-vs-heuristic edges. Each node shows its **latest-run status** and, when a pipeline failed, **the job/step that failed** (e.g. `Deploy → terraform apply`); the run drawer renders a **per-job step tree** highlighting the failing step. Two ways to populate it: a **GitHub App** (live webhooks), or **offline mode** — point it at a list of public repos and it pulls their workflows/runs over the public API with a Sync button, no App needed. The full live ingest→PR loop against a real GitHub org is still pending (next live validation). **See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)** to run it locally, view the UI, and add repos.
 
