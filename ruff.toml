@@ -1,0 +1,19 @@
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+
+[lint.isort]
+known-first-party = ["actionsplane"]
+
+[lint.per-file-ignores]
+# Typer and FastAPI both use the documented idiom of putting `typer.Option(...)` /
+# `Depends(...)` / `Query(...)` calls in parameter defaults; B008 fights that pattern.
+"**/cli/*.py" = ["B008"]
+"**/api/*.py" = ["B008"]
+"**/ingestor/*.py" = ["B008"]
+# Alembic migration scaffolding is generated; relax import/order rules there.
+"migrations/env.py" = ["E402", "F401"]
+"migrations/versions/*.py" = ["E501"]

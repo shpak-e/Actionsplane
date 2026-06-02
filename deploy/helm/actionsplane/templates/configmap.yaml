@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-config
+  labels: {{- include "actionsplane.labels" . | nindent 4 }}
+data:
+  ACTIONSPLANE_REDIS_URL: "redis://{{ include "actionsplane.redisHost" . }}:6379/0"
+  ACTIONSPLANE_GITHUB_API_URL: {{ .Values.config.githubApiUrl | quote }}
+  ACTIONSPLANE_GITHUB_APP_PRIVATE_KEY_PATH: {{ .Values.config.githubAppPrivateKeyPath | quote }}
+  ACTIONSPLANE_FETCH_CONCURRENCY: {{ .Values.config.fetchConcurrency | quote }}
+  ACTIONSPLANE_POLL_INTERVAL_SECONDS: {{ .Values.config.pollIntervalSeconds | quote }}
+  ACTIONSPLANE_BULK_EDITS_ENABLED: {{ .Values.config.bulkEditsEnabled | quote }}

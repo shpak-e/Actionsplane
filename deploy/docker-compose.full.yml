@@ -1,0 +1,129 @@
+# Full local sandbox — brings up Postgres + Redis + all three app processes and runs the
+# DB migration once on startup. From the project root:
+#
+#   docker compose -f deploy/docker-compose.full.yml up --build
+#
+# Then poke at it:
+#   curl localhost:8000/healthz                 # API liveness
+#   curl localhost:8000/api/v1/repos            # [] until a GitHub App is installed
+#   open  localhost:8000/docs                   # OpenAPI / Swagger UI
+#   curl localhost:8001/healthz                 # ingestor liveness
+#
+# The GitHub App env vars are optional: without them the API/UI still work (read model is
+# just empty) and the worker's cron sweeps no-op cleanly. Set them to ingest real data.
+# Build context is the project root so the Dockerfile can COPY src/, migrations/, etc.
+
+x-app-env: &app-env
+  ACTIONSPLANE_DATABASE_URL: postgresql+asyncpg://actionsplane:actionsplane@postgres:5432/actionsplane
+  ACTIONSPLANE_REDIS_URL: redis://redis:6379/0
+  # --- optional: set these to connect a real GitHub App ---
+  # ACTIONSPLANE_GITHUB_APP_ID: "123456"
+  # ACTIONSPLANE_GITHUB_APP_PRIVATE_KEY_PATH: /secrets/app.pem
+  # ACTIONSPLANE_GITHUB_WEBHOOK_SECRET: change-me
+  # --- optional: require a bearer token on /api/v1 (needed before bulk edits) ---
+  # ACTIONSPLANE_API_TOKEN: change-me
+  # ACTIONSPLANE_BULK_EDITS_ENABLED: "false"
+  # --- optional: OFFLINE MODE — no GitHub App. Comma-separated repos (owner/repo or URLs).
+  #     The API fetches their workflows + runs on startup and on the dashboard's Sync button.
+  #     Set ACTIONSPLANE_GITHUB_TOKEN to a plain PAT for a higher rate limit / private repos. ---
+  # ACTIONSPLANE_OFFLINE_REPOS: "actions/checkout,pallets/flask"
+  # ACTIONSPLANE_GITHUB_TOKEN: ghp_xxx
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: actionsplane
+      POSTGRES_PASSWORD: actionsplane
+      POSTGRES_DB: actionsplane
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U actionsplane"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: apply migrations, then exit. Everything else waits on it.
+  migrate:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment: *app-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment: *app-env
+    command:
+      ["uvicorn", "actionsplane.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    # Alias so the frontend's nginx.conf (written for the k8s service name) resolves here too.
+    networks:
+      default:
+        aliases:
+          - actionsplane-api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  ingestor:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment: *app-env
+    command:
+      ["uvicorn", "actionsplane.ingestor.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment: *app-env
+    command: ["arq", "actionsplane.sync.worker.WorkerSettings"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # React dashboard (nginx serving the Vite build, proxying /api + SSE to the api service).
+  # Open http://localhost:3001 once it's up. (3000 is left free for sibling projects.)
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

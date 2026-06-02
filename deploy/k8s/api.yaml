@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: actionsplane-api
+  namespace: actionsplane
+spec:
+  selector:
+    app: actionsplane-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actionsplane-api
+  namespace: actionsplane
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: actionsplane-api
+  template:
+    metadata:
+      labels:
+        app: actionsplane-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: api
+          image: ghcr.io/itamar/actionsplane-api:0.1.0
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: { name: actionsplane-config }
+            - secretRef: { name: actionsplane-secrets }
+          volumeMounts:
+            - name: github-key
+              mountPath: /secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: github-key
+          secret:
+            secretName: actionsplane-github-key
+        - name: tmp
+          emptyDir: {}

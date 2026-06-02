@@ -1,0 +1,14 @@
+ActionsPlane {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}".
+
+Components: api, ingestor, worker, frontend{{ if .Values.postgres.enabled }} + postgres{{ end }}{{ if .Values.redis.enabled }} + redis{{ end }}.
+The Alembic migration ran as a pre-install/pre-upgrade hook.
+
+{{- if .Values.ingress.enabled }}
+UI / API:   http://{{ .Values.ingress.host }}/
+Webhook:    point your GitHub App at  http://{{ .Values.ingress.host }}/webhook
+{{- else }}
+No ingress. Port-forward to check:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "actionsplane.apiHost" . }} 8000:8000
+{{- end }}
+
+Reminder: provide the secrets ({{ .Values.secrets.existingSecret }} + {{ .Values.secrets.existingGithubKeySecret }}) before installing.
+Bulk edits stay disabled until config.bulkEditsEnabled=true AND an API token is set.

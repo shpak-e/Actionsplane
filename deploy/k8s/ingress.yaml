@@ -1,0 +1,36 @@
+# Routes: GitHub webhooks -> ingestor; API + SSE -> api; everything else -> frontend SPA.
+# Assumes an ingress controller (e.g. ingress-nginx). Add TLS via cert-manager in production.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: actionsplane
+  namespace: actionsplane
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"   # SSE
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+spec:
+  rules:
+    - host: actionsplane.example.com
+      http:
+        paths:
+          - path: /webhook
+            pathType: Prefix
+            backend:
+              service:
+                name: actionsplane-ingestor
+                port:
+                  number: 8001
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: actionsplane-api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: actionsplane-frontend
+                port:
+                  number: 80

@@ -1,0 +1,8 @@
+apiVersion: v2
+name: actionsplane
+description: Self-hosted control plane to observe, audit, and edit GitHub Actions across many repos
+type: application
+version: 0.1.0          # chart version
+appVersion: "0.1.0"    # ActionsPlane version
+keywords: [github-actions, supply-chain, platform-engineering, devops]
+home: https://github.com/itamar/actionsplane

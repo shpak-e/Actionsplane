@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actionsplane-worker
+  namespace: actionsplane
+spec:
+  replicas: 1  # arq cron sweeps should run from a single replica to avoid duplicate scheduling
+  selector:
+    matchLabels:
+      app: actionsplane-worker
+  template:
+    metadata:
+      labels:
+        app: actionsplane-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: worker
+          image: ghcr.io/itamar/actionsplane-worker:0.1.0
+          envFrom:
+            - configMapRef: { name: actionsplane-config }
+            - secretRef: { name: actionsplane-secrets }
+          volumeMounts:
+            - name: github-key
+              mountPath: /secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: github-key
+          secret:
+            secretName: actionsplane-github-key
+        - name: tmp
+          emptyDir: {}

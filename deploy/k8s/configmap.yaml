@@ -1,0 +1,14 @@
+# Non-secret runtime config. Secrets (DB URL with password, GitHub App key, webhook secret,
+# API token) live in the Secret — see secret.example.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actionsplane-config
+  namespace: actionsplane
+data:
+  ACTIONSPLANE_REDIS_URL: "redis://actionsplane-redis:6379/0"
+  ACTIONSPLANE_GITHUB_API_URL: "https://api.github.com"
+  ACTIONSPLANE_GITHUB_APP_PRIVATE_KEY_PATH: "/secrets/github-app.pem"
+  ACTIONSPLANE_FETCH_CONCURRENCY: "8"
+  ACTIONSPLANE_POLL_INTERVAL_SECONDS: "300"
+  ACTIONSPLANE_BULK_EDITS_ENABLED: "false"
