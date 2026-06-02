@@ -8,6 +8,7 @@ build/
 .pytest_cache/
 pytest-cache-files-*/
 .ruff_cache/
+.hypothesis/
 .venv-validate/
 
 # uv
