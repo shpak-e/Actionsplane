@@ -7,12 +7,13 @@ Two bearer tokens gate ``/api/v1``:
   with it answers 403.
 
 When *neither* token is configured the API is open (local-dev convenience) and every caller is
-treated as the operator — unchanged from the single-token behaviour. Fail-closed: configuring
-only the read token makes the write paths unreachable (there is no operate token to present),
-never open. Token compares are constant-time. The actor label ("operate" | "read") flows into
-the write-audit log so every mutation records *which* credential performed it. This is
-deliberately simple — two shared tokens — and remains the seam where real OIDC/session auth
-would slot in later.
+treated as the operator — for READS. Every GitHub-writing / config-mutating endpoint instead uses
+``require_configured_operate``, which fails closed: it refuses unless ``ACTIONSPLANE_API_TOKEN`` is
+both configured *and* presented, so tokenless "open" mode can never reach a write path (review 3,
+N1). Configuring only the read token likewise leaves writes unreachable (no operate token exists).
+Token compares are constant-time. The actor label ("operate" | "read") flows into the write-audit
+log so every mutation records *which* credential performed it. This is deliberately simple — two
+shared tokens — and remains the seam where real OIDC/session auth would slot in later.
 """
 
 from __future__ import annotations
@@ -72,3 +73,18 @@ async def require_operate(authorization: str | None = Header(default=None)) -> s
     if actor != ACTOR_OPERATE:
         raise HTTPException(status_code=403, detail="read-only token cannot perform writes")
     return actor
+
+
+async def require_configured_operate(authorization: str | None = Header(default=None)) -> str:
+    """FastAPI dependency for GitHub-writing / config-mutating endpoints — fail closed (N1).
+
+    Stricter than ``require_operate``: it also refuses when *no* operate token is configured at
+    all. Tokenless "open" mode is a convenience for reads only; a mutating endpoint must never be
+    reachable without ``ACTIONSPLANE_API_TOKEN`` both configured and presented. Returns "operate".
+    """
+    if not get_settings().api_token:
+        raise HTTPException(
+            status_code=403,
+            detail="writes require ACTIONSPLANE_API_TOKEN configured (open mode is read-only)",
+        )
+    return await require_operate(authorization)

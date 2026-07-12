@@ -11,6 +11,7 @@ from actionsplane.api.auth import (
     ACTOR_OPERATE,
     ACTOR_READ,
     classify_actor,
+    require_configured_operate,
     require_operate,
     require_token,
     token_ok,
@@ -78,6 +79,29 @@ async def test_require_operate_rejects_read_token_with_403(rbac_settings):
     assert exc.value.status_code == 401
 
 
+async def test_require_configured_operate_with_token(rbac_settings):
+    # Operate token configured + presented → allowed; read token → 403; nothing → 401.
+    assert await require_configured_operate("Bearer op-tok") == ACTOR_OPERATE
+    with pytest.raises(HTTPException) as exc:
+        await require_configured_operate("Bearer ro-tok")
+    assert exc.value.status_code == 403
+    with pytest.raises(HTTPException) as exc:
+        await require_configured_operate(None)
+    assert exc.value.status_code == 401
+
+
+async def test_require_configured_operate_fails_closed_without_token(monkeypatch):
+    # Tokenless "open" mode: a write dependency must refuse regardless of the header (N1).
+    monkeypatch.setattr(
+        "actionsplane.api.auth.get_settings",
+        lambda: SimpleNamespace(api_token=None, api_read_token=None),
+    )
+    for header in (None, "Bearer anything"):
+        with pytest.raises(HTTPException) as exc:
+            await require_configured_operate(header)
+        assert exc.value.status_code == 403
+
+
 def test_rbac_enforced_through_the_app(rbac_settings):
     """End-to-end through FastAPI: read token reads, cannot write; operate token passes the
     RBAC gate (the offline-sync endpoint then 409s on offline mode being off — after auth)."""
@@ -94,3 +118,24 @@ def test_rbac_enforced_through_the_app(rbac_settings):
         assert client.post("/api/v1/offline/sync", headers=op).status_code == 409
         # the audit trail itself is operator-level information
         assert client.get("/api/v1/audit-log", headers=ro).status_code == 403
+
+
+def test_writes_fail_closed_in_tokenless_mode(monkeypatch):
+    """Tokenless 'open' mode: reads work without a credential, but every GitHub-writing endpoint
+    answers 403 — the write path is unreachable without a configured operate token (N1)."""
+    monkeypatch.setattr(
+        "actionsplane.api.auth.get_settings",
+        lambda: SimpleNamespace(api_token=None, api_read_token=None),
+    )
+    from fastapi.testclient import TestClient
+
+    from actionsplane.api.app import app
+
+    with TestClient(app) as client:
+        assert client.get("/api/v1/mode").status_code == 200  # reads stay open
+        for path in (
+            "/api/v1/offline/sync",
+            "/api/v1/runs/1/rerun",
+            "/api/v1/repos/1/sarif/upload",
+        ):
+            assert client.post(path).status_code == 403, path  # writes fail closed
