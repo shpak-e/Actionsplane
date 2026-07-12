@@ -369,3 +369,63 @@ Derived from competitive + platform research (full analysis: [`docs/feature-rese
 > **Build status (2026-05):** GitLab CI provider (v2) — started: `.gitlab-ci.yml` parser + include/component pin audit behind a `Provider` protocol (`src/actionsplane/providers/`). See `docs/multi-ci-research.md` and `docs/memory.md`.
 
 **Caveats carried from research:** CEL-over-workflows has no existing precedent (Rego/OPA is the proven path; treat CEL as an option). A "Cerberus/Cerber" Actions tool could not be verified and was excluded rather than invented.
+
+> **⚠️ 2026-07 update:** this table is superseded in part by §14 — GitHub's 2026 security roadmap natively ships several items here (#4 log secret-scan squeezed by push protection + Data Stream, #8 generic policy engine vs native execution-protection rulesets, #14 runner posture vs "runners as protected endpoints"). See §14 for what's promoted, rotated, or deprioritized.
+
+---
+
+## 14. Roadmap v2 — The Policy-Era Rotation (2026-07 review)
+
+Source: [`docs/architect-review-2026-07.md`](docs/architect-review-2026-07.md) (external-lens code review + fresh market research).
+
+**Market shift:** GitHub's [Actions 2026 security roadmap](https://github.blog/news-insights/product-news/whats-coming-to-our-github-actions-2026-security-roadmap/) natively closes the **detection + enforcement** layers: SHA-pin enforcement policy (shipped 2025-08), workflow `dependencies:` lockfile (preview ~Q4 2026), execution-protection rulesets, scoped secrets, Actions Data Stream telemetry, native egress firewall. zizmor is the de-facto standard find-only scanner. Detection is commoditizing.
+
+**What survives — and appreciates:** nothing in OSS does **fleet-scale remediation**. Every native enforcement knob GitHub ships creates a migration problem it won't solve (flip "require SHA pinning" → hundreds of workflows break until someone opens hundreds of PRs). The observe+audit+edit triangle is still unoccupied.
+
+**Repositioning:** from *"self-hosted observe/audit control plane"* → **"the fleet remediation & migration engine for GitHub's policy era."** Detection commoditized; remediation didn't. Narrative: *"GitHub ships enforcement; ActionsPlane gets a 500-repo org compliant before enforcement day."*
+
+### Phase 5 — Live Validation & Trust Hardening (BLOCKER — before any new feature)
+
+**Goal:** the system is proven against real GitHub and safe to hold `contents:write` over a fleet.
+
+| # | Item | Why |
+|---|---|---|
+| 5.1 ⏳ | **Live validation** against a real org: install App → ingest → audit → SARIF upload → campaign dry-run → PR. Capture the write-path HTTP cassette corpus for tests. | Entire write path is mock-proven only. Everything else is theater until this lands. **The remaining blocker.** |
+| 5.2 ✅ | **Write-operation audit log** (append-only `write_audit_log`, migration 0010; every mutating endpoint + worker SARIF step; `GET /api/v1/audit-log`) + RBAC (operate vs. `ACTIONSPLANE_API_READ_TOKEN` read-only; writes 403 on read token; fail-closed). | Shipped 2026-07-03. |
+| 5.3 ✅ | **Sweep lease/lock** — portable `leases` table, atomic dialect-portable claim (free/expired/self-refresh); wraps reconcile, audit_all, drift_sweep, prune cron. `worker replicas > 1` now safe (skip+log on denial). | Shipped 2026-07-03. |
+| 5.4 ✅ | **Job-upsert ordering gate** — inline SQL `CASE` status rank (queued<in_progress<completed), conditional upsert; equal-completed still applies conclusion corrections. No migration needed. | Shipped 2026-07-03. |
+| 5.5 ✅ | **Rate-limit budget tracker** — `RateBudget` parsed from `X-RateLimit-*` on every response; `ACTIONSPLANE_RATE_LIMIT_FLOOR` (default 250); `RateGate` pauses sweeps gracefully, remainder deferred to next tick. | Shipped 2026-07-03. |
+| 5.6 ✅ | **Payload retention/pruning** — `ACTIONSPLANE_RAW_PAYLOAD_RETENTION_DAYS` (90) / `ACTIONSPLANE_DELIVERY_RETENTION_DAYS` (30); daily lease-guarded cron nulls `raw_payload` (normalized history kept) + expires dedup rows, LIMIT-batched. `mv_workflow_daily` rollup still open (→ 7.2). | Shipped 2026-07-03. |
+
+> Status 2026-07-03: **5.2–5.6 shipped** (157 tests green, migration 0010). Phase 5 closes with 5.1 alone.
+
+### Phase 6 — Policy-Era Wedge (the new headline features)
+
+**Goal:** be the remediation engine for GitHub's new native knobs.
+
+| # | Item | Why |
+|---|---|---|
+| 6.1 | **Policy-readiness simulator** — evaluate GitHub's SHA-pin policy / execution protections against the stored fleet AST: *"flipping this org policy breaks 47 workflows in 23 repos"* → one click → fix campaign. | GitHub's evaluate mode shows *what* would block; we show *what to change*, then change it. First-mover; reuses existing audit+campaign machinery. **Best possible demo.** |
+| 6.2 | **Lockfile campaigns** — generate / verify / refresh the new `dependencies:` lockfile fleet-wide, when it hits public preview (~Q4 2026). | Day-one gap; Renovate will lag on transitive resolution. |
+| 6.3 | **SARIF ingest → converge-PRs** (§13 #1; emit side done, ingest is the missing half). | Operationalize zizmor/octoscan/Scorecard instead of competing. |
+| 6.4 | Supporting edit ops the simulator needs: `set-permissions`, `bump-pins`, `inject-step`. | Already sketched in §5.4/Phase 4. |
+
+### Phase 7 — Observe v2
+
+| # | Item | Why |
+|---|---|---|
+| 7.1 | **Actions Data Stream ingest adapter** (S3 batch reader) as a third population path beside webhooks/offline. | Consume GitHub's richest telemetry rather than compete with it. |
+| 7.2 | Metrics rollups (materialize `mv_workflow_daily`) + retention (pairs with 5.6). | Event-sourced history needs a cheap query path. |
+| 7.3 | Renovate/Dependabot coexistence detection (skip `bump-pins` where Renovate owns the repo). | Kills the "why two bots" objection. |
+| 7.4 | Pipelines v2: intra-workflow job-`needs:` DAG drill-in in the run drawer. | Carried from memory.md backlog. |
+
+### Phase 8 — Enterprise & Breadth (later)
+
+Scoped-secrets migration campaigns (same native-knob→migration pattern) · GHES config support (self-hosted buyers ∩ GHES is large) · LLM-assisted remediation for non-mechanical findings (script-injection rewrites; human-approved PR gate stays) · MCP server (writes = gated PRs) · GitLab observe/edit pillars (only after 5.1).
+
+### Deprioritized (research says: losing bets vs. native)
+
+- Workflow-log secret-leak scan (§13 #4) — GitHub push protection + Data Stream squeeze it.
+- Self-hosted runner / ARC fleet posture (§13 #14) — GitHub's "runners as protected endpoints" owns it.
+- Generic Rego/CEL policy engine (§13 #8) — narrowed to the readiness-simulator framing (6.1); don't compete with native rulesets on enforcement.
+- Deep GitLab provider before live validation — breadth-before-depth failure mode.

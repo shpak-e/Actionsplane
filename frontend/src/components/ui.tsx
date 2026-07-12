@@ -90,6 +90,7 @@ export function ScoreRing({ score }: { score: number }) {
   const r = 56;
   const c = 2 * Math.PI * r;
   const pct = Math.max(0, Math.min(100, score)) / 100;
+  const ring = score >= 80 ? "var(--ok-soft)" : score >= 50 ? "var(--warn-soft)" : "var(--fail-soft)";
   const color = score >= 80 ? "var(--ok)" : score >= 50 ? "var(--warn)" : "var(--fail)";
   return (
     <div className="gauge">
@@ -100,7 +101,7 @@ export function ScoreRing({ score }: { score: number }) {
           cy="66"
           r={r}
           fill="none"
-          stroke={color}
+          stroke={ring}
           strokeWidth="12"
           strokeLinecap="round"
           strokeDasharray={c}

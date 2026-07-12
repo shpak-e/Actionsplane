@@ -18,8 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from actionsplane import __version__
-from actionsplane.api.auth import require_token
+from actionsplane.api.auth import require_operate, require_token
 from actionsplane.api.schemas import (
+    AuditLogEntryOut,
     BindingCreate,
     BindingOut,
     CampaignCreate,
@@ -56,7 +57,9 @@ from actionsplane.db.repository import (
     list_templates,
     list_workflow_relations,
     list_workflows,
+    list_write_audit,
     open_findings,
+    record_write_audit,
     upsert_template,
 )
 from actionsplane.events import subscribe
@@ -182,12 +185,22 @@ async def get_mode() -> ModeOut:
 
 
 @router.post("/offline/sync", response_model=ModeOut)
-async def offline_sync_endpoint(session: AsyncSession = Depends(get_session)) -> ModeOut:
+async def offline_sync_endpoint(
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_operate),
+) -> ModeOut:
     """Re-pull all configured offline repos (the dashboard's Sync button)."""
     settings = get_settings()
     if not settings.offline_mode:
         raise HTTPException(409, "offline mode is not enabled (set ACTIONSPLANE_OFFLINE_REPOS)")
     ls = await sync_offline(session)
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="offline.sync",
+        detail={"repos": ls["repos"], "runs": ls["runs"], "findings": ls["findings"]},
+    )
+    await session.commit()
     return ModeOut(offline=True, live=False, repos=settings.offline_repo_list, synced_at=ls["at"])
 
 
@@ -195,11 +208,12 @@ async def offline_sync_endpoint(session: AsyncSession = Depends(get_session)) ->
 async def rerun_run_endpoint(
     run_id: int,
     session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_operate),
 ) -> dict[str, str]:
     """Re-run a workflow run on GitHub. Needs the GitHub App configured + ``actions: write``.
 
-    This is a write to GitHub, so it sits behind the same ``/api/v1`` bearer-token gate as the
-    rest of the mutating endpoints (enforced when ``ACTIONSPLANE_API_TOKEN`` is set).
+    This is a write to GitHub, so it requires the operate token (a read-only token gets 403)
+    and lands a row in the write-audit log.
     """
     try:
         await rerun_run(session, run_id)
@@ -211,6 +225,8 @@ async def rerun_run_endpoint(
         raise HTTPException(
             502, f"GitHub rejected the re-run ({exc.response.status_code})"
         ) from exc
+    await record_write_audit(session, actor=actor, action="run.rerun", target=f"run:{run_id}")
+    await session.commit()
     return {"status": "rerun-requested", "run_id": str(run_id)}
 
 
@@ -257,11 +273,12 @@ async def get_findings(
 async def upload_repo_sarif_endpoint(
     repo_id: int,
     session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_operate),
 ) -> dict[str, str]:
     """Push this repo's open findings to GitHub Code Scanning (the find→fix bridge).
 
     Requires the GitHub App + ``security_events: write`` and ``security_events_enabled=true``.
-    Behind the ``/api/v1`` bearer-token gate like the other writes.
+    Operate token only (read token → 403); audited.
     """
     try:
         result = await upload_sarif_for_repo(session, repo_id)
@@ -275,6 +292,14 @@ async def upload_repo_sarif_endpoint(
         raise HTTPException(
             502, f"GitHub rejected the SARIF upload ({exc.response.status_code})"
         ) from exc
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="sarif.upload",
+        target=f"repo:{repo_id}",
+        detail={"analysis_url": str(result.get("url", ""))},
+    )
+    await session.commit()
     return {"status": "sarif-uploaded", "analysis_url": str(result.get("url", ""))}
 
 
@@ -372,8 +397,16 @@ async def get_drift(
 async def create_template(
     body: TemplateCreate,
     session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_operate),
 ) -> TemplateOut:
     tpl = await upsert_template(session, name=body.name, canonical_yaml=body.canonical_yaml)
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="template.create",
+        target=f"template:{tpl.name}",
+        detail={"version": tpl.version},
+    )
     await session.commit()
     return TemplateOut.model_validate(tpl, from_attributes=True)
 
@@ -383,9 +416,17 @@ async def add_binding(
     repo_id: int,
     body: BindingCreate,
     session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_operate),
 ) -> BindingOut:
     binding = await create_binding(
         session, repo_id=repo_id, template_id=body.template_id, path=body.path
+    )
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="binding.create",
+        target=f"repo:{repo_id}",
+        detail={"template_id": body.template_id, "path": body.path},
     )
     await session.commit()
     return BindingOut.model_validate(binding, from_attributes=True)
@@ -406,6 +447,7 @@ async def _campaign_out(session: AsyncSession, campaign) -> CampaignOut:
 async def create_campaign_endpoint(
     body: CampaignCreate,
     session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_operate),
 ) -> CampaignOut:
     """Create a bulk-edit campaign and immediately compute its dry-run diffs (no writes)."""
     campaign = await create_campaign(
@@ -416,6 +458,13 @@ async def create_campaign_endpoint(
         repo_ids=body.repo_ids,
         created_by="api",
     )
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="campaign.create",
+        target=f"campaign:{campaign.id}",
+        detail={"name": body.name, "operation": body.operation, "repo_ids": body.repo_ids},
+    )
     await session.commit()
     await run_dry_run(session, campaign)
     return await _campaign_out(session, campaign)
@@ -425,6 +474,7 @@ async def create_campaign_endpoint(
 async def apply_campaign_endpoint(
     campaign_id: int,
     session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_operate),
 ) -> CampaignOut:
     """Open PRs for the campaign. Requires bulk edits enabled (human-triggered)."""
     campaign = await get_campaign(session, campaign_id)
@@ -434,6 +484,15 @@ async def apply_campaign_endpoint(
         await apply_campaign(session, campaign)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
+    targets = await list_targets(session, campaign_id=campaign.id)
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="campaign.apply",
+        target=f"campaign:{campaign.id}",
+        detail={"pr_urls": [t.pr_url for t in targets if t.pr_url]},
+    )
+    await session.commit()
     return await _campaign_out(session, campaign)
 
 
@@ -446,6 +505,19 @@ async def get_campaign_endpoint(
     if campaign is None:
         raise HTTPException(404, "campaign not found")
     return await _campaign_out(session, campaign)
+
+
+@router.get("/audit-log", response_model=list[AuditLogEntryOut])
+async def get_audit_log(
+    limit: int = Query(100, le=500, ge=1),
+    offset: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_operate),
+) -> list[AuditLogEntryOut]:
+    """The write-operation audit trail, newest first (Phase 5.2). Operate token only —
+    the trail names targets and PR URLs, so it's operator-level information."""
+    rows = await list_write_audit(session, limit=limit, offset=offset)
+    return [AuditLogEntryOut.model_validate(r, from_attributes=True) for r in rows]
 
 
 @router.get("/events/stream")
