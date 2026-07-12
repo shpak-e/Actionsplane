@@ -35,6 +35,10 @@ deploy/**/*.html
 .env.*
 !.env.example
 
+# internal design / working docs — the public repo keeps only README.md
+/plan.md
+/docs/
+
 # tooling
 .mise.local.toml
 *.log

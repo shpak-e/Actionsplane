@@ -18,6 +18,12 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # Interdependent majors must upgrade together or npm ci hits peer conflicts,
+      # so group each family into a single PR (patterns-based groups catch all update types).
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      vite:
+        patterns: ["vite", "@vitejs/*"]
       npm-minor-patch:
         update-types: [minor, patch]
 
