@@ -17,17 +17,17 @@ import { MetricsPanel } from "./MetricsPanel";
 import type { Job, Run, Step } from "../types";
 
 function jobColor(job: Job): string {
-  if (job.status !== "completed") return "var(--warn)";
-  if (job.conclusion === "success") return "var(--ok)";
-  if (job.conclusion === "failure") return "var(--fail)";
+  if (job.status !== "completed") return "var(--warn-soft)";
+  if (job.conclusion === "success") return "var(--ok-soft)";
+  if (job.conclusion === "failure") return "var(--fail-soft)";
   return "var(--fg-subtle)";
 }
 
 function stepColor(step: Step): string {
-  if (step.conclusion === "success") return "var(--ok)";
-  if (step.conclusion === "failure") return "var(--fail)";
+  if (step.conclusion === "success") return "var(--ok-soft)";
+  if (step.conclusion === "failure") return "var(--fail-soft)";
   if (step.conclusion === "skipped" || step.conclusion === "cancelled") return "var(--fg-subtle)";
-  if (step.status === "in_progress") return "var(--warn)";
+  if (step.status === "in_progress") return "var(--warn-soft)";
   return "var(--border-strong)"; // queued / unknown
 }
 

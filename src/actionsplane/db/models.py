@@ -201,3 +201,39 @@ class ProcessedDelivery(Base):
     delivery_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     event_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class WriteAuditLog(Base):
+    """Append-only who/what/when trail for every write operation (plan §8, Phase 5.2).
+
+    One row per mutation (campaign create/apply, run re-run, SARIF upload, offline sync, …).
+    ``actor`` is the token label that performed it ("operate" | "read" | "worker"); ``detail``
+    carries the operation-specific evidence (PR URLs, repo ids, analysis URL). Never updated or
+    deleted by application code — the repository layer only exposes insert + list.
+    """
+
+    __tablename__ = "write_audit_log"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    actor: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(64))  # e.g. campaign.apply, run.rerun
+    target: Mapped[str | None] = mapped_column(String(512), nullable=True)  # repo/campaign/run id
+    detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class Lease(Base):
+    """Named, TTL'd lease so cron sweeps stay single-flight at worker replicas > 1 (Phase 5.3).
+
+    Claimed via an atomic conditional upsert (see ``repository.claim_lease``): the row is taken
+    iff it is free, expired, or already held by the claimant. Portable across PG/sqlite — no
+    advisory locks, no Redis dependency in the correctness path.
+    """
+
+    __tablename__ = "leases"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)  # e.g. "sweep:reconcile"
+    holder: Mapped[str] = mapped_column(String(255))  # host:pid of the claiming worker
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

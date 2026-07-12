@@ -144,6 +144,17 @@ class CampaignOut(BaseModel):
     targets: list[CampaignTargetOut] = []
 
 
+class AuditLogEntryOut(BaseModel):
+    """One row of the append-only write-operation audit trail (plan §8, Phase 5.2)."""
+
+    id: int
+    occurred_at: datetime
+    actor: str
+    action: str
+    target: str | None
+    detail: dict | None
+
+
 class ModeOut(BaseModel):
     """Whether the dashboard should show live updates (App mode) or a Sync button (offline)."""
 

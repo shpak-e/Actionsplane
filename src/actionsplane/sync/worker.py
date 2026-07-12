@@ -8,6 +8,9 @@ webhooks dropped. Built on arq so workers are async-native and share the httpx c
 from __future__ import annotations
 
 import logging
+import os
+import socket
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
 import httpx
@@ -19,10 +22,15 @@ from actionsplane.audit.service import audit_repo
 from actionsplane.config import get_settings
 from actionsplane.db.base import get_sessionmaker
 from actionsplane.db.repository import (
+    claim_lease,
     create_binding,
     get_repo,
     list_repos,
     list_templates,
+    prune_deliveries,
+    prune_job_payloads,
+    prune_run_payloads,
+    record_write_audit,
     update_binding_drift,
     upsert_installation,
     upsert_job,
@@ -31,12 +39,56 @@ from actionsplane.db.repository import (
 )
 from actionsplane.drift import autobind_paths, compute_drift
 from actionsplane.events import publish
+from actionsplane.github.client import GitHubClient
 from actionsplane.github.factory import TokenCache, app_jwt, client_for_installation
 from actionsplane.ingestor import events
 from actionsplane.observability import continue_trace, setup_tracing
 from actionsplane.sync.concurrency import bounded_gather
 
 log = logging.getLogger(__name__)
+
+# Lease holder identity: unique per worker process, stable within it (Phase 5.3).
+_HOLDER = f"{socket.gethostname()}:{os.getpid()}"
+
+
+async def _claim_sweep_lease(name: str, ttl_seconds: int) -> bool:
+    """Claim the single-flight lease for one cron sweep; False → another replica has it.
+
+    Makes the sweeps safe at worker ``replicas > 1``: every replica's cron fires, but only the
+    claimant proceeds. The TTL covers the tick (and clock skew between replicas) while expiring
+    before the next one, so a crashed holder can never wedge a sweep permanently.
+    """
+    async with get_sessionmaker()() as session:
+        ok = await claim_lease(
+            session, name=f"sweep:{name}", holder=_HOLDER, ttl_seconds=ttl_seconds
+        )
+    if not ok:
+        log.info("skipping %s sweep: lease held by another worker", name)
+    return ok
+
+
+class RateGate:
+    """Sweep-wide circuit breaker on the per-install rate-limit budget (Phase 5.5).
+
+    Each per-repo task ``note()``s its client after fetching; once any observed
+    ``X-RateLimit-Remaining`` dips under the floor the gate trips, and tasks that haven't
+    started yet return immediately. The sweep ends gracefully — no exception storm, and the
+    skipped repos are simply covered by the next sweep (idempotent upserts make that free).
+    """
+
+    def __init__(self, floor: int) -> None:
+        self.floor = floor
+        self.tripped = False
+
+    def note(self, gh: GitHubClient) -> None:
+        if not self.tripped and gh.rate_budget.below(self.floor):
+            self.tripped = True
+            log.warning(
+                "rate-limit budget low (remaining=%s < floor=%d): pausing sweep, "
+                "remaining repos deferred to the next sweep",
+                gh.rate_budget.remaining,
+                self.floor,
+            )
 
 
 async def _maybe_upload_sarif(session, gh, repo) -> None:
@@ -45,7 +97,15 @@ async def _maybe_upload_sarif(session, gh, repo) -> None:
     if not get_settings().security_events_enabled:
         return
     try:
-        await upload_repo_sarif(session, gh, repo)
+        result = await upload_repo_sarif(session, gh, repo)
+        await record_write_audit(
+            session,
+            actor="worker",
+            action="sarif.upload",
+            target=f"{repo.owner}/{repo.name}",
+            detail={"analysis_url": str(result.get("url", ""))},
+        )
+        await session.commit()
     except Exception:
         log.warning("SARIF upload failed for %s/%s", repo.owner, repo.name, exc_info=True)
 
@@ -95,21 +155,28 @@ async def reconcile(ctx: dict) -> int:
     Runs every ``poll_interval_seconds`` to recover from any dropped webhook deliveries.
     Upserts are idempotent, so re-ingesting an already-seen run is a no-op. Returns the
     number of runs reconciled. No-ops cleanly if the GitHub App isn't configured yet.
+    Lease-guarded (single-flight across replicas) and rate-budget-gated.
     """
     settings = get_settings()
     if not settings.github_app_id or not settings.github_app_private_key_path:
         return 0
+    if not await _claim_sweep_lease("reconcile", ttl_seconds=settings.poll_interval_seconds):
+        return 0
 
     jwt = app_jwt()
+    gate = RateGate(settings.rate_limit_floor)
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         repos = await list_repos(session, watched_only=True)
 
     async def reconcile_one(repo, http, cache: TokenCache) -> int:
+        if gate.tripped:
+            return 0  # budget exhausted mid-sweep; this repo waits for the next tick
         gh = await client_for_installation(
             repo.installation_id, http=http, jwt=jwt, token_cache=cache
         )
         runs = await gh.list_workflow_runs(repo.owner, repo.name)
+        gate.note(gh)
         async with sessionmaker() as s:
             for run in runs:
                 await upsert_run(s, events.normalize_run_object(run, repo.id))
@@ -130,18 +197,24 @@ async def audit_all(ctx: dict) -> int:
     settings = get_settings()
     if not settings.github_app_id or not settings.github_app_private_key_path:
         return 0
+    if not await _claim_sweep_lease("audit", ttl_seconds=3600):
+        return 0
     jwt = app_jwt()
+    gate = RateGate(settings.rate_limit_floor)
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         repos = await list_repos(session, watched_only=True)
 
     async def audit_one(repo, http, cache: TokenCache) -> int:
+        if gate.tripped:
+            return 0
         gh = await client_for_installation(
             repo.installation_id, http=http, jwt=jwt, token_cache=cache
         )
         async with sessionmaker() as s:
             written = await audit_repo(s, gh, repo)
             await _maybe_upload_sarif(s, gh, repo)
+            gate.note(gh)
             return written
 
     async with httpx.AsyncClient(timeout=30) as http:
@@ -177,7 +250,10 @@ async def drift_sweep(ctx: dict) -> int:
     settings = get_settings()
     if not settings.github_app_id or not settings.github_app_private_key_path:
         return 0
+    if not await _claim_sweep_lease("drift", ttl_seconds=3600):
+        return 0
     jwt = app_jwt()
+    gate = RateGate(settings.rate_limit_floor)
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         templates = {t.name: t for t in await list_templates(session)}
@@ -188,10 +264,13 @@ async def drift_sweep(ctx: dict) -> int:
         repos = await list_repos(session, watched_only=True)
 
     async def drift_one(repo, http, cache: TokenCache) -> int:
+        if gate.tripped:
+            return 0
         gh = await client_for_installation(
             repo.installation_id, http=http, jwt=jwt, token_cache=cache
         )
         paths = await gh.list_workflow_files(repo.owner, repo.name)
+        gate.note(gh)
         bound = autobind_paths(list(canon), paths)
         n = 0
         async with sessionmaker() as s:
@@ -214,6 +293,34 @@ async def drift_sweep(ctx: dict) -> int:
     return sum(counts)
 
 
+async def prune_retention(ctx: dict) -> int:
+    """Cron task: enforce the payload-retention policy (Phase 5.6). Returns rows pruned.
+
+    Nulls ``raw_payload`` on runs/jobs older than ``raw_payload_retention_days`` (normalized
+    columns stay — history remains queryable) and deletes ``processed_deliveries`` rows older
+    than ``delivery_retention_days``. Both dimensions batch their writes so a large backlog
+    never holds a long lock. Lease-guarded like the sweeps; 0 disables a dimension.
+    """
+    settings = get_settings()
+    if settings.raw_payload_retention_days <= 0 and settings.delivery_retention_days <= 0:
+        return 0
+    if not await _claim_sweep_lease("prune", ttl_seconds=3600):
+        return 0
+    now = datetime.now(UTC)
+    pruned = 0
+    async with get_sessionmaker()() as session:
+        if settings.raw_payload_retention_days > 0:
+            cutoff = now - timedelta(days=settings.raw_payload_retention_days)
+            pruned += await prune_run_payloads(session, cutoff=cutoff)
+            pruned += await prune_job_payloads(session, cutoff=cutoff)
+        if settings.delivery_retention_days > 0:
+            cutoff = now - timedelta(days=settings.delivery_retention_days)
+            pruned += await prune_deliveries(session, cutoff=cutoff)
+    if pruned:
+        log.info("retention pruning removed payloads/rows: %d", pruned)
+    return pruned
+
+
 async def _on_startup(ctx: dict) -> None:
     """Configure tracing once when the arq worker boots (so worker spans export too)."""
     setup_tracing("actionsplane-worker")
@@ -228,6 +335,7 @@ class WorkerSettings:
         cron(reconcile, minute=set(range(0, 60, 5))),  # every 5 min
         cron(audit_all, hour=set(range(0, 24, 6))),  # every 6 h: org-wide audit sweep
         cron(drift_sweep, hour=set(range(0, 24, 6)), minute={30}),  # every 6 h: drift sweep
+        cron(prune_retention, hour={4}, minute={45}),  # daily: payload retention (Phase 5.6)
     ]
 
     # arq reads this as a RedisSettings *instance* (not a callable). Resolved at import from the
