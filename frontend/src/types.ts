@@ -56,7 +56,16 @@ export interface Metrics {
 
 export interface LiveEnvelope {
   kind: "run" | "job";
-  data: Record<string, unknown>;
+  // Slim payload from the backend bus (build_envelope): just enough to scope a cache invalidation.
+  data: {
+    id?: number;
+    repo_id?: number;
+    run_id?: number;
+    workflow_id?: number;
+    status?: string;
+    conclusion?: string;
+    head_branch?: string;
+  };
 }
 
 export interface Finding {

@@ -24,10 +24,11 @@ const SEV_COLOR: Record<string, string> = {
 export function SecurityTab({ repoId }: { repoId: number | null }) {
   const [severity, setSeverity] = useState("");
   const { data: scorecard } = useQuery({ queryKey: ["scorecard"], queryFn: api.scorecard });
-  const { data: findings = [], isLoading, isError, error } = useQuery({
+  const { data: findingsPage, isLoading, isError, error } = useQuery({
     queryKey: ["findings", repoId, severity],
     queryFn: () => api.findings({ repo_id: repoId ?? undefined, severity: severity || undefined }),
   });
+  const findings = findingsPage?.items ?? [];
 
   const total = scorecard
     ? Object.values(scorecard.by_severity).reduce((a, b) => a + b, 0)

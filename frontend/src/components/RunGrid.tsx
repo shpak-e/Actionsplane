@@ -38,7 +38,9 @@ export function RunGrid({
   const { data: runs = [], isLoading, isError, error } = useQuery({
     queryKey: ["runs", repoId, status],
     queryFn: () => api.runs({ repo_id: repoId ?? undefined, status: status || undefined }),
-    refetchInterval: 30_000,
+    // SSE (useEventStream) drives freshness; keep a 5-min staleTime as a fallback if the stream
+    // drops, instead of a blanket 30s poll per grid.
+    staleTime: 5 * 60_000,
   });
 
   return (

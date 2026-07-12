@@ -9,9 +9,9 @@ them to response models.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
-from sqlalchemy import case, delete, null, or_, select, update
+from sqlalchemy import and_, case, delete, func, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,16 +60,20 @@ async def upsert_repo(
     await _upsert(session, Repo, {**values, "installation_id": installation_id})
 
 
-async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> None:
-    """Upsert a run, but never let a stale event overwrite a fresher row.
+async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> int:
+    """Upsert a run, never letting a stale event overwrite a fresher row. Returns rows written.
 
     GitHub delivers ``workflow_run`` events at-least-once and out of order, so a late
     ``in_progress`` redelivery can arrive *after* the ``completed`` event for the same run id.
     An unconditional upsert would regress the row from completed back to in-progress. The run's
-    ``updated_at`` (monotonic across GitHub state transitions) gates the update: it only applies
-    when the incoming event is not older than the stored row — or when the stored row predates
-    this column (legacy rows, ``updated_at IS NULL``). The guard stays in SQL so the check and
-    the write are atomic; doing it as read-then-write would reopen the race under concurrency.
+    ``updated_at`` (monotonic across GitHub state transitions) gates the update.
+
+    The guard is *strict* (review 3, 4a): it applies only when the incoming event is strictly
+    newer, or exactly as new **and** actually changes ``status``/``conclusion`` (an equal-timestamp
+    conclusion correction — the same nuance as the job gate). An identical redelivery — the common
+    case for a reconcile sweep replaying already-seen runs — matches nothing and writes 0 rows, so
+    an idle repo churns no rows and dirties no indexes. Legacy rows (``updated_at IS NULL``) still
+    take the update. Staying in SQL keeps the check-and-write atomic under concurrency.
     """
     stmt = _conflict_insert(session)(WorkflowRun).values(**values)
     update_cols = {c: stmt.excluded[c] for c in values if c != "id"}
@@ -78,10 +82,18 @@ async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> None:
         set_=update_cols,
         where=or_(
             WorkflowRun.updated_at.is_(None),
-            WorkflowRun.updated_at <= stmt.excluded["updated_at"],
+            WorkflowRun.updated_at < stmt.excluded["updated_at"],  # strictly newer → apply
+            and_(  # same timestamp, but a real status/conclusion change (correction) → apply
+                WorkflowRun.updated_at == stmt.excluded["updated_at"],
+                or_(
+                    WorkflowRun.status.is_distinct_from(stmt.excluded["status"]),
+                    WorkflowRun.conclusion.is_distinct_from(stmt.excluded["conclusion"]),
+                ),
+            ),
         ),
     )
-    await session.execute(stmt)
+    result = await session.execute(stmt)
+    return result.rowcount
 
 
 async def upsert_installation(session: AsyncSession, values: dict[str, Any]) -> None:
@@ -136,23 +148,72 @@ async def list_all_workflows(session: AsyncSession) -> list[Workflow]:
     return list((await session.scalars(select(Workflow))).all())
 
 
-async def latest_runs_for(session: AsyncSession, workflow_ids: list[int]) -> dict[int, WorkflowRun]:
+class LatestRun(NamedTuple):
+    """The few run columns the Pipelines graph needs — deliberately *not* the whole ORM row, so
+    the heavy ``raw_payload`` JSONB is never fetched for a status annotation (Phase 5.3 / review 3).
+    """
+
+    id: int
+    workflow_id: int
+    status: str | None
+    conclusion: str | None
+    run_number: int
+
+
+async def latest_runs_for(session: AsyncSession, workflow_ids: list[int]) -> dict[int, LatestRun]:
     """The most recent run per workflow id (by ``created_at``), for the given workflow ids.
 
-    Scoped to the supplied ids (the Pipelines graph passes just its workflows) so this stays cheap
-    even on a large run history. Returns ``{workflow_id: WorkflowRun}``.
+    One indexed query regardless of history size: a ``ROW_NUMBER() OVER (PARTITION BY workflow_id
+    ORDER BY created_at DESC)`` window keeps just the newest row per workflow, instead of streaming
+    every run for those workflows into Python. Only the status columns are selected — never
+    ``raw_payload``. The window form is dialect-portable (PG + sqlite ≥ 3.25). Returns
+    ``{workflow_id: LatestRun}``.
     """
     if not workflow_ids:
         return {}
-    stmt = (
-        select(WorkflowRun)
-        .where(WorkflowRun.workflow_id.in_(workflow_ids))
-        .order_by(WorkflowRun.created_at.desc())
+    rn = func.row_number().over(
+        partition_by=WorkflowRun.workflow_id,
+        order_by=(WorkflowRun.created_at.desc(), WorkflowRun.id.desc()),  # id breaks created ties
     )
-    out: dict[int, WorkflowRun] = {}
-    for run in (await session.scalars(stmt)).all():
-        out.setdefault(run.workflow_id, run)  # first seen = newest (desc order)
-    return out
+    ranked = (
+        select(
+            WorkflowRun.id,
+            WorkflowRun.workflow_id,
+            WorkflowRun.status,
+            WorkflowRun.conclusion,
+            WorkflowRun.run_number,
+            rn.label("rn"),
+        )
+        .where(WorkflowRun.workflow_id.in_(workflow_ids))
+        .subquery()
+    )
+    stmt = select(
+        ranked.c.id, ranked.c.workflow_id, ranked.c.status, ranked.c.conclusion, ranked.c.run_number
+    ).where(ranked.c.rn == 1)
+    rows = (await session.execute(stmt)).all()
+    return {
+        row.workflow_id: LatestRun(
+            row.id, row.workflow_id, row.status, row.conclusion, row.run_number
+        )
+        for row in rows
+    }
+
+
+async def list_failing_jobs(session: AsyncSession, run_ids: list[int]) -> list[WorkflowJob]:
+    """All failed jobs across the given runs, in one query, ordered ``(run_id, id)`` (review 3).
+
+    Replaces the per-run job fetch behind the Pipelines "which step failed?" annotation: the caller
+    groups by ``run_id`` and takes the first failing job per run. ``raw_payload`` is loaded (the
+    step list lives there) but only for *failed* jobs of *failed* runs, so it stays bounded.
+    """
+    if not run_ids:
+        return []
+    stmt = (
+        select(WorkflowJob)
+        .where(WorkflowJob.run_id.in_(run_ids), WorkflowJob.conclusion == "failure")
+        .order_by(WorkflowJob.run_id, WorkflowJob.id)
+    )
+    return list((await session.scalars(stmt)).all())
 
 
 async def get_repo(session: AsyncSession, repo_id: int) -> Repo | None:
@@ -193,6 +254,18 @@ async def list_runs(
     return list((await session.scalars(stmt)).all())
 
 
+def _open_findings_filter(stmt, *, repo_id, severity, finding_type):
+    """Apply the open-findings predicate shared by the list / count / paginate paths."""
+    stmt = stmt.where(AuditFinding.resolved_at.is_(None))
+    if repo_id is not None:
+        stmt = stmt.where(AuditFinding.repo_id == repo_id)
+    if severity is not None:
+        stmt = stmt.where(AuditFinding.severity == severity)
+    if finding_type is not None:
+        stmt = stmt.where(AuditFinding.finding_type == finding_type)
+    return stmt
+
+
 async def open_findings(
     session: AsyncSession,
     *,
@@ -200,17 +273,45 @@ async def open_findings(
     severity: str | None = None,
     finding_type: str | None = None,
     limit: int = 1000,
+    offset: int = 0,
 ) -> list[AuditFinding]:
-    """Open (unresolved) findings, filtered in SQL and bounded by ``limit``."""
-    stmt = select(AuditFinding).where(AuditFinding.resolved_at.is_(None))
-    if repo_id is not None:
-        stmt = stmt.where(AuditFinding.repo_id == repo_id)
-    if severity is not None:
-        stmt = stmt.where(AuditFinding.severity == severity)
-    if finding_type is not None:
-        stmt = stmt.where(AuditFinding.finding_type == finding_type)
-    stmt = stmt.order_by(AuditFinding.last_seen_at.desc()).limit(limit)
+    """A page of open (unresolved) findings, filtered in SQL, newest first."""
+    stmt = _open_findings_filter(
+        select(AuditFinding), repo_id=repo_id, severity=severity, finding_type=finding_type
+    )
+    stmt = stmt.order_by(AuditFinding.last_seen_at.desc()).limit(limit).offset(offset)
     return list((await session.scalars(stmt)).all())
+
+
+async def count_open_findings(
+    session: AsyncSession,
+    *,
+    repo_id: int | None = None,
+    severity: str | None = None,
+    finding_type: str | None = None,
+) -> int:
+    """Total open findings matching the filters — the ``total`` for a paginated ``/findings``."""
+    stmt = _open_findings_filter(
+        select(func.count()).select_from(AuditFinding),
+        repo_id=repo_id,
+        severity=severity,
+        finding_type=finding_type,
+    )
+    return int((await session.scalar(stmt)) or 0)
+
+
+async def count_open_findings_grouped(session: AsyncSession) -> list[tuple[str, str, int]]:
+    """``(severity, finding_type, count)`` for all open findings — grouped in SQL (review 3, P1.4).
+
+    The scorecard rolls these counts up instead of fetching (and capping) rows, so it stays exact
+    no matter how many findings are open. Rides the 0007 partial index on ``resolved_at IS NULL``.
+    """
+    stmt = (
+        select(AuditFinding.severity, AuditFinding.finding_type, func.count().label("n"))
+        .where(AuditFinding.resolved_at.is_(None))
+        .group_by(AuditFinding.severity, AuditFinding.finding_type)
+    )
+    return [(r.severity, r.finding_type, r.n) for r in (await session.execute(stmt)).all()]
 
 
 async def upsert_finding(session: AsyncSession, row: dict[str, Any]) -> None:
@@ -356,6 +457,13 @@ async def get_campaign(session: AsyncSession, campaign_id: int) -> Campaign | No
 async def list_targets(session: AsyncSession, *, campaign_id: int) -> list[CampaignTarget]:
     stmt = select(CampaignTarget).where(CampaignTarget.campaign_id == campaign_id)
     return list((await session.scalars(stmt)).all())
+
+
+async def delivery_seen(session: AsyncSession, delivery_id: str) -> bool:
+    """True if this ``X-GitHub-Delivery`` was already recorded — the fast-ack cache the ingestor
+    checks to short-circuit a redelivery without re-running side effects (review 3, N4)."""
+    stmt = select(ProcessedDelivery.delivery_id).where(ProcessedDelivery.delivery_id == delivery_id)
+    return (await session.scalar(stmt)) is not None
 
 
 async def try_record_delivery(

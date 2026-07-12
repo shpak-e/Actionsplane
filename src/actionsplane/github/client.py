@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 
@@ -61,11 +61,23 @@ class GitHubClient:
         self._token = token
         self._base = (api_url or get_settings().github_api_url).rstrip("/")
         # url -> (etag, parsed-json body). Lets steady-state sweeps reuse cached responses via
-        # conditional requests (304 Not Modified is free under GitHub's primary rate limit).
+        # conditional requests (304 Not Modified is free under GitHub's primary rate limit). Bounded
+        # (~1k urls) with insertion-order eviction so a long-lived cached client can't grow forever
+        # (review 3, 4c); the factory keeps one client per installation so this survives sweeps.
         self._etag_cache: dict[str, tuple[str, object]] = {}
+        self._etag_cap = 1000
         # Last-observed X-RateLimit-* budget for this token (one client per installation token,
         # so this is the per-install view). Updated on every response, including 304s and errors.
         self._rate_budget = RateBudget()
+
+    def rebind(self, *, token: str | None, client: httpx.AsyncClient) -> None:
+        """Point this client at a refreshed installation token / httpx client, keeping its ETag
+        cache and rate-budget snapshot (review 3, 4c). The factory reuses one GitHubClient per
+        installation across sweeps; each sweep opens a fresh httpx client and may have minted a new
+        token, so rebind swaps those in without discarding the accumulated conditional cache.
+        """
+        self._token = token
+        self._client = client
 
     @property
     def rate_budget(self) -> RateBudget:
@@ -78,14 +90,17 @@ class GitHubClient:
         if raw is None:
             return
         try:
-            remaining = int(raw)
+            # Clamp negatives to 0 so a garbled value can't read as "budget available". A huge
+            # reset overflows fromtimestamp (OverflowError/OSError) — treat any of these as garbled
+            # and keep the previous snapshot rather than crashing the request.
+            remaining = max(0, int(raw))
             limit = int(headers["x-ratelimit-limit"]) if "x-ratelimit-limit" in headers else None
             reset_at = (
                 datetime.fromtimestamp(int(headers["x-ratelimit-reset"]), tz=UTC)
                 if "x-ratelimit-reset" in headers
                 else None
             )
-        except (ValueError, OSError):  # a proxy mangled the headers — keep the old snapshot
+        except (ValueError, OSError, OverflowError):
             return
         self._rate_budget = RateBudget(remaining=remaining, limit=limit, reset_at=reset_at)
 
@@ -136,6 +151,8 @@ class GitHubClient:
         body = resp.json()
         etag = resp.headers.get("etag")
         if etag:
+            if key not in self._etag_cache and len(self._etag_cache) >= self._etag_cap:
+                self._etag_cache.pop(next(iter(self._etag_cache)), None)  # evict oldest (insertion)
             self._etag_cache[key] = (etag, body)
         return body, resp.headers
 
@@ -143,6 +160,14 @@ class GitHubClient:
         """GET a single resource (ETag-cached, Retry-After-aware)."""
         body, _ = await self._get_cached(url, params=params)
         return body
+
+    def _same_origin(self, url: str) -> bool:
+        """True if ``url`` is https and on the configured API host. The ``rel="next"`` Link comes
+        from the response headers, so a hostile/compromised proxy could point it at an attacker
+        origin — following it would leak the ``Authorization: Bearer <token>`` header there. We
+        refuse to walk off the API host (review 3, N3)."""
+        target = urlparse(url)
+        return target.scheme == "https" and target.netloc == urlparse(self._base).netloc
 
     async def _get_paginated(
         self, url: str, *, params: dict | None = None, max_pages: int = 20
@@ -162,22 +187,36 @@ class GitHubClient:
             pages += 1
             match = _NEXT_LINK_RE.search(resp_headers.get("link", ""))
             next_url = match.group(1) if match else None
+            if next_url and not self._same_origin(next_url):
+                log.warning("ignoring cross-origin pagination Link %r (from %s)", next_url, url)
+                next_url = None
             next_params = None  # the next-link URL already carries page/per_page
         if next_url:
             log.warning("pagination hit max_pages=%d for %s (more pages exist)", max_pages, url)
 
     async def list_workflow_runs(
-        self, owner: str, repo: str, *, per_page: int = 100, max_runs: int = 500
+        self,
+        owner: str,
+        repo: str,
+        *,
+        per_page: int = 100,
+        max_runs: int = 500,
+        created: str | None = None,
     ) -> list[dict[str, Any]]:
         """Recent workflow runs (newest first), walking pages up to ``max_runs``.
 
         ETag-cached + Retry-After-aware per page. ``max_runs`` bounds memory/time for a busy repo;
         runs come newest-first, so the cap keeps the most recent. Truncation is logged, not silent.
+        ``created`` passes GitHub's server-side date filter (e.g. ``>=2026-07-01``) so a reconcile
+        sweep fetches only recent runs instead of paging deep history every tick (review 3, 4b).
         """
+        params: dict[str, Any] = {"per_page": min(per_page, 100)}
+        if created:
+            params["created"] = created
         runs: list[dict[str, Any]] = []
         async for page in self._get_paginated(
             f"{self._base}/repos/{owner}/{repo}/actions/runs",
-            params={"per_page": min(per_page, 100)},
+            params=params,
         ):
             if isinstance(page, dict):
                 runs.extend(page.get("workflow_runs", []))

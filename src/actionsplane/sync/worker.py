@@ -50,6 +50,10 @@ log = logging.getLogger(__name__)
 # Lease holder identity: unique per worker process, stable within it (Phase 5.3).
 _HOLDER = f"{socket.gethostname()}:{os.getpid()}"
 
+# Hard ceiling on how long any single sweep may run (arq ``job_timeout``). Sweep leases are given
+# a TTL above this so a slow-but-live holder never lets its lease lapse mid-sweep (review 3, 4d).
+_SWEEP_JOB_TIMEOUT = 900  # seconds
+
 
 async def _claim_sweep_lease(name: str, ttl_seconds: int) -> bool:
     """Claim the single-flight lease for one cron sweep; False → another replica has it.
@@ -160,11 +164,18 @@ async def reconcile(ctx: dict) -> int:
     settings = get_settings()
     if not settings.github_app_id or not settings.github_app_private_key_path:
         return 0
-    if not await _claim_sweep_lease("reconcile", ttl_seconds=settings.poll_interval_seconds):
+    # TTL above the sweep's worst-case runtime so a live holder can't lapse mid-sweep and let a
+    # second replica double-run; the holder re-claims (self-refresh) on its next tick (4d).
+    if not await _claim_sweep_lease("reconcile", ttl_seconds=_SWEEP_JOB_TIMEOUT + 120):
         return 0
 
     jwt = app_jwt()
     gate = RateGate(settings.rate_limit_floor)
+    # Only ask GitHub for runs created within the lookback window (server-side filter), and cap the
+    # walk — a reconcile is a dropped-webhook safety net, so it never needs deep history (4b).
+    created_floor = (
+        datetime.now(UTC) - timedelta(hours=settings.reconcile_lookback_hours)
+    ).strftime(">=%Y-%m-%d")
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         repos = await list_repos(session, watched_only=True)
@@ -175,7 +186,9 @@ async def reconcile(ctx: dict) -> int:
         gh = await client_for_installation(
             repo.installation_id, http=http, jwt=jwt, token_cache=cache
         )
-        runs = await gh.list_workflow_runs(repo.owner, repo.name)
+        runs = await gh.list_workflow_runs(
+            repo.owner, repo.name, created=created_floor, max_runs=100
+        )
         gate.note(gh)
         async with sessionmaker() as s:
             for run in runs:
@@ -337,6 +350,13 @@ class WorkerSettings:
         cron(drift_sweep, hour=set(range(0, 24, 6)), minute={30}),  # every 6 h: drift sweep
         cron(prune_retention, hour={4}, minute={45}),  # daily: payload retention (Phase 5.6)
     ]
+
+    # Explicit runtime bounds (review 3, 4d): sweeps over many repos can run minutes, so give jobs
+    # a generous timeout; cap concurrency; keep results briefly for debuggability. Defaults left
+    # implicit before this made a slow sweep's behaviour (and lease TTL sizing) unclear.
+    job_timeout: ClassVar[int] = _SWEEP_JOB_TIMEOUT  # 900s
+    max_jobs: ClassVar[int] = 10
+    keep_result: ClassVar[int] = 3600  # seconds
 
     # arq reads this as a RedisSettings *instance* (not a callable). Resolved at import from the
     # env-driven DSN, which is set before the arq worker loads WorkerSettings.

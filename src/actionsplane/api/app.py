@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from actionsplane import __version__
-from actionsplane.api.auth import require_operate, require_token
+from actionsplane.api.auth import require_configured_operate, require_operate, require_token
 from actionsplane.api.schemas import (
     AuditLogEntryOut,
     BindingCreate,
@@ -27,6 +27,7 @@ from actionsplane.api.schemas import (
     CampaignOut,
     CampaignTargetOut,
     FindingOut,
+    FindingsPage,
     JobOut,
     MetricsOut,
     ModeOut,
@@ -44,12 +45,15 @@ from actionsplane.config import get_settings
 from actionsplane.db.base import get_session, get_sessionmaker
 from actionsplane.db.models import WorkflowRun
 from actionsplane.db.repository import (
+    count_open_findings,
+    count_open_findings_grouped,
     create_binding,
     create_campaign,
     get_campaign,
     latest_runs_for,
     list_all_workflows,
     list_bindings,
+    list_failing_jobs,
     list_jobs,
     list_repos,
     list_runs,
@@ -187,7 +191,7 @@ async def get_mode() -> ModeOut:
 @router.post("/offline/sync", response_model=ModeOut)
 async def offline_sync_endpoint(
     session: AsyncSession = Depends(get_session),
-    actor: str = Depends(require_operate),
+    actor: str = Depends(require_configured_operate),
 ) -> ModeOut:
     """Re-pull all configured offline repos (the dashboard's Sync button)."""
     settings = get_settings()
@@ -208,7 +212,7 @@ async def offline_sync_endpoint(
 async def rerun_run_endpoint(
     run_id: int,
     session: AsyncSession = Depends(get_session),
-    actor: str = Depends(require_operate),
+    actor: str = Depends(require_configured_operate),
 ) -> dict[str, str]:
     """Re-run a workflow run on GitHub. Needs the GitHub App configured + ``actions: write``.
 
@@ -256,24 +260,29 @@ def run_to_record(run: WorkflowRun) -> dict:
     }
 
 
-@router.get("/findings", response_model=list[FindingOut])
+@router.get("/findings", response_model=FindingsPage)
 async def get_findings(
     repo_id: int | None = Query(None),
     severity: str | None = Query(None),
     finding_type: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
-) -> list[FindingOut]:
-    findings = await open_findings(
-        session, repo_id=repo_id, severity=severity, finding_type=finding_type
+) -> FindingsPage:
+    """A page of open findings plus the unpaginated total, so the UI never silently truncates."""
+    filters = {"repo_id": repo_id, "severity": severity, "finding_type": finding_type}
+    items = await open_findings(session, **filters, limit=limit, offset=offset)
+    total = await count_open_findings(session, **filters)
+    return FindingsPage(
+        items=[FindingOut.model_validate(f, from_attributes=True) for f in items], total=total
     )
-    return [FindingOut.model_validate(f, from_attributes=True) for f in findings]
 
 
 @router.post("/repos/{repo_id}/sarif/upload")
 async def upload_repo_sarif_endpoint(
     repo_id: int,
     session: AsyncSession = Depends(get_session),
-    actor: str = Depends(require_operate),
+    actor: str = Depends(require_configured_operate),
 ) -> dict[str, str]:
     """Push this repo's open findings to GitHub Code Scanning (the find→fix bridge).
 
@@ -312,16 +321,23 @@ async def get_repo_findings(
     return [FindingOut.model_validate(f, from_attributes=True) for f in findings]
 
 
-async def _failing_step(session: AsyncSession, run_id: int) -> tuple[str | None, str | None]:
-    """For a failed run, find the (job, step) that failed — the first failing step in the first
-    failing job. Returns (job_name, step_name); either may be None if steps weren't recorded."""
-    for job in await list_jobs(session, run_id=run_id):
-        if job.conclusion == "failure":
-            for step in _job_steps(job):
-                if step.get("conclusion") == "failure":
-                    return job.name, step.get("name")
-            return job.name, None
-    return None, None
+async def _failing_steps_for(
+    session: AsyncSession, run_ids: list[int]
+) -> dict[int, tuple[str | None, str | None]]:
+    """Batched (job, step) failure detail for many runs at once — one query, not one per run.
+
+    For each run: the first failing step in the first failing job (jobs ordered by id, mirroring
+    their lifecycle order). Returns ``{run_id: (job_name, step_name)}``; a run with no failing job
+    is simply absent. Replaces the per-node ``_failing_step`` that made ``/pipelines`` N+1."""
+    out: dict[int, tuple[str | None, str | None]] = {}
+    for job in await list_failing_jobs(session, run_ids):
+        if job.run_id in out:
+            continue  # first failing job per run wins (query is ordered by run_id, id)
+        step_name = next(
+            (s.get("name") for s in _job_steps(job) if s.get("conclusion") == "failure"), None
+        )
+        out[job.run_id] = (job.name, step_name)
+    return out
 
 
 @router.get("/pipelines", response_model=PipelineGraphOut)
@@ -339,6 +355,11 @@ async def get_pipelines(session: AsyncSession = Depends(get_session)) -> Pipelin
         if (rel.repo_id, rel.path) in wf_by_key
     ]
     latest = await latest_runs_for(session, wf_ids)
+    # One batched query for the failing (job, step) of every failed latest-run, instead of a
+    # per-node round-trip (the old N+1). Keyed by run id.
+    failing = await _failing_steps_for(
+        session, [run.id for run in latest.values() if run.conclusion == "failure"]
+    )
 
     items = []
     for rel in relations:
@@ -350,7 +371,7 @@ async def get_pipelines(session: AsyncSession = Depends(get_session)) -> Pipelin
         if run is not None:
             failed_job = failed_step = None
             if run.conclusion == "failure":
-                failed_job, failed_step = await _failing_step(session, run.id)
+                failed_job, failed_step = failing.get(run.id, (None, None))
             status = {
                 "status": run.status,
                 "conclusion": run.conclusion,
@@ -372,9 +393,9 @@ async def get_pipelines(session: AsyncSession = Depends(get_session)) -> Pipelin
 
 @router.get("/audit/scorecard", response_model=ScorecardOut)
 async def get_scorecard(session: AsyncSession = Depends(get_session)) -> ScorecardOut:
-    findings = await open_findings(session)
+    counts = await count_open_findings_grouped(session)
     repos = await list_repos(session, watched_only=True)
-    sc = build_scorecard(findings, repos=len(repos))
+    sc = build_scorecard(counts, repos=len(repos))
     return ScorecardOut(**asdict(sc))
 
 
@@ -397,7 +418,7 @@ async def get_drift(
 async def create_template(
     body: TemplateCreate,
     session: AsyncSession = Depends(get_session),
-    actor: str = Depends(require_operate),
+    actor: str = Depends(require_configured_operate),
 ) -> TemplateOut:
     tpl = await upsert_template(session, name=body.name, canonical_yaml=body.canonical_yaml)
     await record_write_audit(
@@ -416,7 +437,7 @@ async def add_binding(
     repo_id: int,
     body: BindingCreate,
     session: AsyncSession = Depends(get_session),
-    actor: str = Depends(require_operate),
+    actor: str = Depends(require_configured_operate),
 ) -> BindingOut:
     binding = await create_binding(
         session, repo_id=repo_id, template_id=body.template_id, path=body.path
@@ -447,7 +468,7 @@ async def _campaign_out(session: AsyncSession, campaign) -> CampaignOut:
 async def create_campaign_endpoint(
     body: CampaignCreate,
     session: AsyncSession = Depends(get_session),
-    actor: str = Depends(require_operate),
+    actor: str = Depends(require_configured_operate),
 ) -> CampaignOut:
     """Create a bulk-edit campaign and immediately compute its dry-run diffs (no writes)."""
     campaign = await create_campaign(
@@ -474,7 +495,7 @@ async def create_campaign_endpoint(
 async def apply_campaign_endpoint(
     campaign_id: int,
     session: AsyncSession = Depends(get_session),
-    actor: str = Depends(require_operate),
+    actor: str = Depends(require_configured_operate),
 ) -> CampaignOut:
     """Open PRs for the campaign. Requires bulk edits enabled (human-triggered)."""
     campaign = await get_campaign(session, campaign_id)

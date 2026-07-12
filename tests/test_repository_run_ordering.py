@@ -56,9 +56,10 @@ def _run(status: str, conclusion: str | None, updated_at: str) -> dict:
     }
 
 
-async def _upsert(session: AsyncSession, run: dict) -> None:
-    await upsert_run(session, events.normalize_run_object(run, repo_id=1))
+async def _upsert(session: AsyncSession, run: dict) -> int:
+    rc = await upsert_run(session, events.normalize_run_object(run, repo_id=1))
     await session.commit()
+    return rc
 
 
 async def test_late_in_progress_does_not_clobber_completed(session):
@@ -87,3 +88,19 @@ async def test_first_write_inserts(session):
 
     row = await session.get(WorkflowRun, 555)
     assert row.status == "queued"
+
+
+async def test_identical_redelivery_writes_no_row(session):
+    # The reconcile hot path: replaying an already-seen run. The strict guard (4a) must write 0
+    # rows for a byte-identical redelivery — no churn, no index dirtying on an idle repo.
+    assert await _upsert(session, _run("completed", "success", "2026-06-01T10:05:00Z")) == 1
+    assert await _upsert(session, _run("completed", "success", "2026-06-01T10:05:00Z")) == 0
+
+
+async def test_equal_timestamp_conclusion_correction_applies(session):
+    # Same updated_at, but the conclusion changes (a correction) → the write must still land,
+    # mirroring the job gate's equal-rank nuance.
+    assert await _upsert(session, _run("completed", None, "2026-06-01T10:05:00Z")) == 1
+    assert await _upsert(session, _run("completed", "success", "2026-06-01T10:05:00Z")) == 1
+    row = await session.get(WorkflowRun, 555)
+    assert row.conclusion == "success"

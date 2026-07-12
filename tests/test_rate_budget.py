@@ -63,6 +63,35 @@ async def test_rate_budget_ignores_garbled_and_absent_headers():
     assert gh.rate_budget.remaining == 100
 
 
+async def test_rate_budget_clamps_negative_remaining():
+    # A negative remaining (garbled/hostile) must not read as "budget available" (review 3, N5).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"workflow_runs": []}, headers={"X-RateLimit-Remaining": "-5"}
+        )
+
+    http, gh = _client(handler)
+    async with http:
+        await gh.list_workflow_runs("acme", "infra")
+    assert gh.rate_budget.remaining == 0  # clamped, never negative
+
+
+async def test_rate_budget_survives_overflow_reset():
+    # An astronomically large reset overflows datetime.fromtimestamp — it must be swallowed, not
+    # crash the request (a hostile header can't take the client down; N5).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"workflow_runs": []},
+            headers={"X-RateLimit-Remaining": "500", "X-RateLimit-Reset": "9" * 40},
+        )
+
+    http, gh = _client(handler)
+    async with http:
+        await gh.list_workflow_runs("acme", "infra")  # must not raise
+    assert gh.rate_budget.remaining is None  # parse discarded on overflow, snapshot untouched
+
+
 def test_budget_below_floor_predicate():
     assert RateBudget(remaining=100).below(250) is True
     assert RateBudget(remaining=250).below(250) is False
