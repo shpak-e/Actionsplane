@@ -34,7 +34,11 @@ depends_on: str | Sequence[str] | None = None
 _INDEXES: list[tuple[str, str, str]] = [
     ("ix_workflow_runs_repo_created", "workflow_runs", "(repo_id, created_at DESC)"),
     ("ix_workflow_runs_workflow_created", "workflow_runs", "(workflow_id, created_at DESC)"),
-    ("ix_workflow_runs_payload_prune", "workflow_runs", "(created_at) WHERE raw_payload IS NOT NULL"),
+    (
+        "ix_workflow_runs_payload_prune",
+        "workflow_runs",
+        "(created_at) WHERE raw_payload IS NOT NULL",
+    ),
     (
         "ix_workflow_jobs_completed_prune",
         "workflow_jobs",

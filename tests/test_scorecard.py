@@ -25,12 +25,12 @@ def test_finding_as_row_includes_fingerprint_and_path():
 
 
 def test_scorecard_counts_and_score():
-    findings = [
-        {"severity": "high", "finding_type": "unpinned_action"},
-        {"severity": "high", "finding_type": "unpinned_action"},
-        {"severity": "medium", "finding_type": "missing_permissions"},
+    # grouped counts: (severity, finding_type, n)
+    counts = [
+        ("high", "unpinned_action", 2),
+        ("medium", "missing_permissions", 1),
     ]
-    sc = build_scorecard(findings, repos=2)
+    sc = build_scorecard(counts, repos=2)
     assert sc.open_findings == 3
     assert sc.by_severity == {"high": 2, "medium": 1}
     assert sc.by_type == {"unpinned_action": 2, "missing_permissions": 1}
@@ -43,5 +43,4 @@ def test_scorecard_clean_is_100():
 
 
 def test_scorecard_floors_at_zero():
-    many = [{"severity": "critical", "finding_type": "x"} for _ in range(100)]
-    assert build_scorecard(many, repos=1).score == 0
+    assert build_scorecard([("critical", "x", 100)], repos=1).score == 0

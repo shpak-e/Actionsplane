@@ -27,6 +27,7 @@ from actionsplane.api.schemas import (
     CampaignOut,
     CampaignTargetOut,
     FindingOut,
+    FindingsPage,
     JobOut,
     MetricsOut,
     ModeOut,
@@ -44,6 +45,8 @@ from actionsplane.config import get_settings
 from actionsplane.db.base import get_session, get_sessionmaker
 from actionsplane.db.models import WorkflowRun
 from actionsplane.db.repository import (
+    count_open_findings,
+    count_open_findings_grouped,
     create_binding,
     create_campaign,
     get_campaign,
@@ -257,17 +260,22 @@ def run_to_record(run: WorkflowRun) -> dict:
     }
 
 
-@router.get("/findings", response_model=list[FindingOut])
+@router.get("/findings", response_model=FindingsPage)
 async def get_findings(
     repo_id: int | None = Query(None),
     severity: str | None = Query(None),
     finding_type: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
-) -> list[FindingOut]:
-    findings = await open_findings(
-        session, repo_id=repo_id, severity=severity, finding_type=finding_type
+) -> FindingsPage:
+    """A page of open findings plus the unpaginated total, so the UI never silently truncates."""
+    filters = {"repo_id": repo_id, "severity": severity, "finding_type": finding_type}
+    items = await open_findings(session, **filters, limit=limit, offset=offset)
+    total = await count_open_findings(session, **filters)
+    return FindingsPage(
+        items=[FindingOut.model_validate(f, from_attributes=True) for f in items], total=total
     )
-    return [FindingOut.model_validate(f, from_attributes=True) for f in findings]
 
 
 @router.post("/repos/{repo_id}/sarif/upload")
@@ -385,9 +393,9 @@ async def get_pipelines(session: AsyncSession = Depends(get_session)) -> Pipelin
 
 @router.get("/audit/scorecard", response_model=ScorecardOut)
 async def get_scorecard(session: AsyncSession = Depends(get_session)) -> ScorecardOut:
-    findings = await open_findings(session)
+    counts = await count_open_findings_grouped(session)
     repos = await list_repos(session, watched_only=True)
-    sc = build_scorecard(findings, repos=len(repos))
+    sc = build_scorecard(counts, repos=len(repos))
     return ScorecardOut(**asdict(sc))
 
 

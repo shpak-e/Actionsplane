@@ -37,11 +37,18 @@ export const api = {
   },
   jobs: (runId: number) => get<Job[]>(`/runs/${runId}/jobs`),
   metrics: (workflowId: number) => get<Metrics>(`/workflows/${workflowId}/metrics`),
-  findings: (params: { repo_id?: number; severity?: string; finding_type?: string }) => {
+  findings: (params: {
+    repo_id?: number;
+    severity?: string;
+    finding_type?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
     const q = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => v != null && q.set(k, String(v)));
     const qs = q.toString();
-    return get<Finding[]>(`/findings${qs ? `?${qs}` : ""}`);
+    // Paginated: { items, total } — total is the unpaginated count (see FindingsPage).
+    return get<{ items: Finding[]; total: number }>(`/findings${qs ? `?${qs}` : ""}`);
   },
   scorecard: () => get<Scorecard>("/audit/scorecard"),
   drift: (repoId?: number) =>

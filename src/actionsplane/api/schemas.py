@@ -87,6 +87,13 @@ class FindingOut(BaseModel):
     resolved_at: datetime | None
 
 
+class FindingsPage(BaseModel):
+    """A paginated slice of open findings plus the unpaginated total (review 3, P1.4)."""
+
+    items: list[FindingOut]
+    total: int
+
+
 class ScorecardOut(BaseModel):
     repos: int
     open_findings: int

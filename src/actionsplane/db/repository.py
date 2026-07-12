@@ -254,6 +254,18 @@ async def list_runs(
     return list((await session.scalars(stmt)).all())
 
 
+def _open_findings_filter(stmt, *, repo_id, severity, finding_type):
+    """Apply the open-findings predicate shared by the list / count / paginate paths."""
+    stmt = stmt.where(AuditFinding.resolved_at.is_(None))
+    if repo_id is not None:
+        stmt = stmt.where(AuditFinding.repo_id == repo_id)
+    if severity is not None:
+        stmt = stmt.where(AuditFinding.severity == severity)
+    if finding_type is not None:
+        stmt = stmt.where(AuditFinding.finding_type == finding_type)
+    return stmt
+
+
 async def open_findings(
     session: AsyncSession,
     *,
@@ -261,17 +273,45 @@ async def open_findings(
     severity: str | None = None,
     finding_type: str | None = None,
     limit: int = 1000,
+    offset: int = 0,
 ) -> list[AuditFinding]:
-    """Open (unresolved) findings, filtered in SQL and bounded by ``limit``."""
-    stmt = select(AuditFinding).where(AuditFinding.resolved_at.is_(None))
-    if repo_id is not None:
-        stmt = stmt.where(AuditFinding.repo_id == repo_id)
-    if severity is not None:
-        stmt = stmt.where(AuditFinding.severity == severity)
-    if finding_type is not None:
-        stmt = stmt.where(AuditFinding.finding_type == finding_type)
-    stmt = stmt.order_by(AuditFinding.last_seen_at.desc()).limit(limit)
+    """A page of open (unresolved) findings, filtered in SQL, newest first."""
+    stmt = _open_findings_filter(
+        select(AuditFinding), repo_id=repo_id, severity=severity, finding_type=finding_type
+    )
+    stmt = stmt.order_by(AuditFinding.last_seen_at.desc()).limit(limit).offset(offset)
     return list((await session.scalars(stmt)).all())
+
+
+async def count_open_findings(
+    session: AsyncSession,
+    *,
+    repo_id: int | None = None,
+    severity: str | None = None,
+    finding_type: str | None = None,
+) -> int:
+    """Total open findings matching the filters — the ``total`` for a paginated ``/findings``."""
+    stmt = _open_findings_filter(
+        select(func.count()).select_from(AuditFinding),
+        repo_id=repo_id,
+        severity=severity,
+        finding_type=finding_type,
+    )
+    return int((await session.scalar(stmt)) or 0)
+
+
+async def count_open_findings_grouped(session: AsyncSession) -> list[tuple[str, str, int]]:
+    """``(severity, finding_type, count)`` for all open findings — grouped in SQL (review 3, P1.4).
+
+    The scorecard rolls these counts up instead of fetching (and capping) rows, so it stays exact
+    no matter how many findings are open. Rides the 0007 partial index on ``resolved_at IS NULL``.
+    """
+    stmt = (
+        select(AuditFinding.severity, AuditFinding.finding_type, func.count().label("n"))
+        .where(AuditFinding.resolved_at.is_(None))
+        .group_by(AuditFinding.severity, AuditFinding.finding_type)
+    )
+    return [(r.severity, r.finding_type, r.n) for r in (await session.execute(stmt)).all()]
 
 
 async def upsert_finding(session: AsyncSession, row: dict[str, Any]) -> None:
