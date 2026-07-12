@@ -35,6 +35,11 @@ deploy/**/*.html
 .env.*
 !.env.example
 
+# internal review / audit / handoff notes — kept out of the (public) repo
+docs/*review*.md
+docs/fix-plan-*.md
+docs/memory.md
+
 # tooling
 .mise.local.toml
 *.log
