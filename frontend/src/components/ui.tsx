@@ -49,6 +49,8 @@ export const IconGraph = ({ size = 14, className }: IconProps) =>
   svg(size, className, <><circle cx="3.5" cy="8" r="2" /><circle cx="12.5" cy="3.5" r="2" /><circle cx="12.5" cy="12.5" r="2" /><path d="M5.4 7l5.3-2.6M5.4 9l5.3 2.6" /></>);
 export const IconArrowRight = ({ size = 14, className }: IconProps) =>
   svg(size, className, <><path d="M2.5 8h10M9 4.5 12.5 8 9 11.5" /></>);
+export const IconKey = ({ size = 14, className }: IconProps) =>
+  svg(size, className, <><circle cx="5.5" cy="10.5" r="2.6" /><path d="M7.4 8.6 13 3M11 4.4l1.4 1.4M9.2 6.2l1.3 1.3" /></>);
 
 /* ---------- run status badge ---------- */
 

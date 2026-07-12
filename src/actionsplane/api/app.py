@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from actionsplane import __version__
-from actionsplane.api.auth import require_configured_operate, require_operate, require_token
+from actionsplane.api.auth import require_configured_operate, require_token
 from actionsplane.api.schemas import (
     AuditLogEntryOut,
     BindingCreate,
@@ -266,7 +266,8 @@ async def get_findings(
     severity: str | None = Query(None),
     finding_type: str | None = Query(None),
     limit: int = Query(100, ge=1, le=1000),
-    offset: int = Query(0, ge=0),
+    # Bound the offset too: an unbounded deep offset walks the whole index (review 4, NEW-6).
+    offset: int = Query(0, ge=0, le=1_000_000),
     session: AsyncSession = Depends(get_session),
 ) -> FindingsPage:
     """A page of open findings plus the unpaginated total, so the UI never silently truncates."""
@@ -531,12 +532,13 @@ async def get_campaign_endpoint(
 @router.get("/audit-log", response_model=list[AuditLogEntryOut])
 async def get_audit_log(
     limit: int = Query(100, le=500, ge=1),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=1_000_000),
     session: AsyncSession = Depends(get_session),
-    actor: str = Depends(require_operate),
+    actor: str = Depends(require_configured_operate),
 ) -> list[AuditLogEntryOut]:
-    """The write-operation audit trail, newest first (Phase 5.2). Operate token only —
-    the trail names targets and PR URLs, so it's operator-level information."""
+    """The write-operation audit trail, newest first (Phase 5.2). Gated like a write
+    (``require_configured_operate``): the trail names targets and PR URLs, so it's operator-level
+    information and must not be world-readable in tokenless open mode (review 4, NEW-11)."""
     rows = await list_write_audit(session, limit=limit, offset=offset)
     return [AuditLogEntryOut.model_validate(r, from_attributes=True) for r in rows]
 

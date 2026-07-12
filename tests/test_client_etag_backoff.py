@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
+
 import httpx
 import pytest
 
-from actionsplane.github.client import GitHubClient
+from actionsplane.github.client import GitHubClient, _retry_after_delay
 
 
 @pytest.mark.asyncio
@@ -74,3 +76,53 @@ async def test_secondary_rate_limit_403_with_retry_after():
         gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
         await gh.list_workflow_runs("acme", "infra")
     assert attempts["n"] == 2
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("30", 30.0),
+        ("120", 60.0),  # clamped to the 60s ceiling
+        ("0", 0.0),
+        ("-5", 0.0),  # negatives floored to 0
+        ("abc", 0.0),  # non-numeric → no crash, retry immediately
+        ("nan", 0.0),  # min(nan, 60) is nan → would park forever; must become 0
+        ("inf", 0.0),
+        ("-inf", 0.0),
+        ("1e309", 0.0),  # overflows to inf
+    ],
+)
+def test_retry_after_delay_is_finite_and_bounded(raw, expected):
+    delay = _retry_after_delay(raw)
+    assert math.isfinite(delay)
+    assert 0.0 <= delay <= 60.0
+    assert delay == expected
+
+
+@pytest.mark.parametrize("bad", ["abc", "nan", "inf", "-inf", "1e309"])
+@pytest.mark.asyncio
+async def test_garbled_retry_after_survives_a_real_request(monkeypatch, bad):
+    """A hostile/garbled Retry-After (NaN, non-numeric, overflow) must neither crash the sweep nor
+    park the task forever — the request survives and the sleep is finite (review 4, NEW-2)."""
+    sleeps: list[float] = []
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    monkeypatch.setattr("actionsplane.github.client.asyncio.sleep", fake_sleep)
+
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return httpx.Response(429, headers={"retry-after": bad}, json={"message": "slow down"})
+        return httpx.Response(200, json={"workflow_runs": []}, headers={"etag": '"e"'})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
+        result = await gh.list_workflow_runs("acme", "infra")
+    assert result == []
+    assert attempts["n"] == 2  # retried once, did not crash
+    assert len(sleeps) == 1
+    assert math.isfinite(sleeps[0]) and 0.0 <= sleeps[0] <= 60.0

@@ -12,9 +12,10 @@ import base64
 import gzip
 import json
 import logging
+import math
 import re
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlencode, urlparse
@@ -50,39 +51,67 @@ class RateBudget:
         return floor > 0 and self.remaining is not None and self.remaining < floor
 
 
+@dataclass(slots=True)
+class InstallationCache:
+    """Per-installation state shared across the short-lived clients concurrent sweeps spin up.
+
+    The factory hands one of these to every ``GitHubClient`` it builds for a given installation,
+    so the conditional-request ETag cache and last-observed rate budget survive across sweeps
+    (steady-state sweeps re-validate with cheap 304s; the rate gate keeps a per-install view).
+    Crucially it holds **no httpx transport** — each worker job owns its own client + transport,
+    so one job closing its transport can never break another mid-request (review 4, NEW-1).
+    """
+
+    etag_cache: dict[str, tuple[str, object]] = field(default_factory=dict)
+    rate_budget: RateBudget = field(default_factory=RateBudget)
+    # ~1k urls; insertion-order eviction so a long-lived cache can't grow forever (review 3, 4c).
+    cap: int = 1000
+
+
+def _retry_after_delay(raw: str) -> float:
+    """Seconds to sleep for a ``Retry-After`` header, hardened against hostile/garbled values.
+
+    GitHub sends an integer seconds count, but a compromised or GHES endpoint (reachable via
+    ``ACTIONSPLANE_GITHUB_API_URL``) could send anything. Non-numeric, ``nan`` or infinite values
+    → 0 (retry immediately) rather than crashing the sweep or — for ``nan`` — parking the task
+    forever, since ``min(nan, 60)`` is ``nan`` and ``asyncio.sleep(nan)`` never wakes. Clamp the
+    rest to ``[0, 60]`` so no single header can stall a worker slot (review 4, NEW-2). The RFC
+    HTTP-date form is not used by GitHub; it parses to 0 here, which is safe (immediate retry).
+    """
+    try:
+        delay = float(raw)
+    except (ValueError, TypeError):
+        return 0.0
+    if not math.isfinite(delay):
+        return 0.0
+    return max(0.0, min(delay, 60.0))
+
+
 class GitHubClient:
     """Authenticated client for one installation token."""
 
     def __init__(
-        self, token: str | None, *, client: httpx.AsyncClient, api_url: str | None = None
+        self,
+        token: str | None,
+        *,
+        client: httpx.AsyncClient,
+        api_url: str | None = None,
+        cache: InstallationCache | None = None,
     ) -> None:
         self._client = client
         # token may be None in offline mode (unauthenticated public reads, lower rate limit).
         self._token = token
         self._base = (api_url or get_settings().github_api_url).rstrip("/")
-        # url -> (etag, parsed-json body). Lets steady-state sweeps reuse cached responses via
-        # conditional requests (304 Not Modified is free under GitHub's primary rate limit). Bounded
-        # (~1k urls) with insertion-order eviction so a long-lived cached client can't grow forever
-        # (review 3, 4c); the factory keeps one client per installation so this survives sweeps.
-        self._etag_cache: dict[str, tuple[str, object]] = {}
-        self._etag_cap = 1000
-        # Last-observed X-RateLimit-* budget for this token (one client per installation token,
-        # so this is the per-install view). Updated on every response, including 304s and errors.
-        self._rate_budget = RateBudget()
-
-    def rebind(self, *, token: str | None, client: httpx.AsyncClient) -> None:
-        """Point this client at a refreshed installation token / httpx client, keeping its ETag
-        cache and rate-budget snapshot (review 3, 4c). The factory reuses one GitHubClient per
-        installation across sweeps; each sweep opens a fresh httpx client and may have minted a new
-        token, so rebind swaps those in without discarding the accumulated conditional cache.
-        """
-        self._token = token
-        self._client = client
+        # Conditional-request ETag cache + last-observed rate budget. Shared per-installation by
+        # the factory so both survive across sweeps (review 3, 4c); a standalone client (offline
+        # reads, tests) gets its own. Holds no httpx transport, so concurrent sweeps that each own
+        # their own client never race on a shared, closeable client object (review 4, NEW-1).
+        self._cache = cache if cache is not None else InstallationCache()
 
     @property
     def rate_budget(self) -> RateBudget:
         """Immutable snapshot of the last-observed rate-limit budget for this client's token."""
-        return self._rate_budget
+        return self._cache.rate_budget
 
     def _note_rate_headers(self, headers: httpx.Headers) -> None:
         """Record the X-RateLimit-* headers, ignoring absent/garbled values."""
@@ -102,7 +131,7 @@ class GitHubClient:
             )
         except (ValueError, OSError, OverflowError):
             return
-        self._rate_budget = RateBudget(remaining=remaining, limit=limit, reset_at=reset_at)
+        self._cache.rate_budget = RateBudget(remaining=remaining, limit=limit, reset_at=reset_at)
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -134,7 +163,8 @@ class GitHubClient:
         (seconds); we sleep and retry once. Primary rate limits are surfaced to the caller's pacing.
         """
         key = self._cache_key(url, params)
-        cached = self._etag_cache.get(key)
+        etag_cache = self._cache.etag_cache
+        cached = etag_cache.get(key)
         headers = dict(self._headers)
         if cached is not None:
             headers["If-None-Match"] = cached[0]
@@ -142,7 +172,7 @@ class GitHubClient:
             resp = await self._client.get(url, headers=headers, params=params)
             self._note_rate_headers(resp.headers)
             if resp.status_code in (429, 403) and resp.headers.get("retry-after") and attempt == 0:
-                await asyncio.sleep(min(float(resp.headers["retry-after"]), 60))
+                await asyncio.sleep(_retry_after_delay(resp.headers["retry-after"]))
                 continue
             break
         if resp.status_code == 304 and cached is not None:
@@ -151,9 +181,9 @@ class GitHubClient:
         body = resp.json()
         etag = resp.headers.get("etag")
         if etag:
-            if key not in self._etag_cache and len(self._etag_cache) >= self._etag_cap:
-                self._etag_cache.pop(next(iter(self._etag_cache)), None)  # evict oldest (insertion)
-            self._etag_cache[key] = (etag, body)
+            if key not in etag_cache and len(etag_cache) >= self._cache.cap:
+                etag_cache.pop(next(iter(etag_cache)), None)  # evict oldest (insertion order)
+            etag_cache[key] = (etag, body)
         return body, resp.headers
 
     async def _get_json(self, url: str, *, params: dict | None = None) -> object:
@@ -161,13 +191,25 @@ class GitHubClient:
         body, _ = await self._get_cached(url, params=params)
         return body
 
+    @staticmethod
+    def _norm_netloc(netloc: str) -> str:
+        """Normalise a netloc for origin comparison: lowercase + drop an explicit ``:443`` default
+        port. A GHES ``rel="next"`` that differs only cosmetically (uppercase host, ``:443``) must
+        not be mistaken for a cross-origin hop and truncate pagination (review 4, NEW-10). Userinfo
+        (``user@host``) is kept verbatim, so the ``api.github.com@evil.com`` bypass still fails.
+        """
+        netloc = netloc.lower()
+        return netloc[:-4] if netloc.endswith(":443") else netloc
+
     def _same_origin(self, url: str) -> bool:
         """True if ``url`` is https and on the configured API host. The ``rel="next"`` Link comes
         from the response headers, so a hostile/compromised proxy could point it at an attacker
         origin — following it would leak the ``Authorization: Bearer <token>`` header there. We
         refuse to walk off the API host (review 3, N3)."""
         target = urlparse(url)
-        return target.scheme == "https" and target.netloc == urlparse(self._base).netloc
+        return target.scheme == "https" and self._norm_netloc(target.netloc) == self._norm_netloc(
+            urlparse(self._base).netloc
+        )
 
     async def _get_paginated(
         self, url: str, *, params: dict | None = None, max_pages: int = 20

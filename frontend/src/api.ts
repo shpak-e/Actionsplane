@@ -1,3 +1,4 @@
+import { getOperateToken } from "./lib/auth";
 import type {
   Binding,
   Finding,
@@ -12,14 +13,24 @@ import type {
 
 const BASE = "/api/v1";
 
+/**
+ * Attach the operate token (if the user set one) as `Authorization: Bearer`. Sent on reads too:
+ * when the server has a token configured it gates reads as well, so the dashboard needs it to load;
+ * in tokenless "open" mode no token exists here and the header is simply omitted (review 4, NEW-3).
+ */
+function authHeaders(): HeadersInit {
+  const token = getOperateToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
   return res.json() as Promise<T>;
 }
 
 async function post<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: "POST" });
+  const res = await fetch(`${BASE}${path}`, { method: "POST", headers: authHeaders() });
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
     throw new Error(detail?.detail || `${res.status} ${res.statusText}`);
