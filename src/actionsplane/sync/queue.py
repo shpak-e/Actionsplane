@@ -22,11 +22,13 @@ async def get_pool() -> ArqRedis:
     return _pool
 
 
-async def enqueue_event(event: str, payload: dict) -> None:
+async def enqueue_event(event: str, payload: dict, *, job_id: str | None = None) -> None:
     """Enqueue a webhook event for the sync worker to process.
 
     The current trace context rides along as ``_trace`` so the worker's processing span chains to
     this ingest span — one end-to-end trace across the queue (no-op carrier when tracing is off).
+    ``job_id`` (GitHub's ``X-GitHub-Delivery``) makes the enqueue idempotent: arq dedups on the job
+    id, so a redelivery re-enqueued after a mid-request failure yields a single job (review 3, N4).
     """
     pool = await get_pool()
-    await pool.enqueue_job("process_event", event, payload, _trace=inject_context())
+    await pool.enqueue_job("process_event", event, payload, _trace=inject_context(), _job_id=job_id)

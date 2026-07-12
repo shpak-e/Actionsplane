@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from actionsplane.config import get_settings
 from actionsplane.db.base import get_session
-from actionsplane.db.repository import try_record_delivery
+from actionsplane.db.repository import delivery_seen, try_record_delivery
 from actionsplane.ingestor.signature import verify_signature
 from actionsplane.observability import instrument_fastapi, setup_tracing
 from actionsplane.sync.queue import enqueue_event
@@ -77,16 +77,23 @@ async def webhook(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="invalid JSON body") from exc
 
-    # Idempotency: GitHub delivers at-least-once. The first POST records the delivery and
-    # enqueues; any subsequent POST with the same X-GitHub-Delivery acks but does NOT re-enqueue,
-    # so side effects (worker upserts, SSE republish, audit re-run) happen exactly once.
+    # Idempotency + no-lost-events (review 3, N4). GitHub delivers at-least-once. A known
+    # redelivery is fast-acked here without re-running side effects.
     if not x_github_delivery:
         raise HTTPException(status_code=400, detail="missing X-GitHub-Delivery header")
-    newly_recorded = await try_record_delivery(
-        session, delivery_id=x_github_delivery, event_type=x_github_event
-    )
-    if not newly_recorded:
+    if await delivery_seen(session, x_github_delivery):
         return {"status": "duplicate", "event": x_github_event, "delivery": x_github_delivery}
 
-    await enqueue_event(x_github_event, payload)
-    return {"status": "accepted", "event": x_github_event}
+    # Enqueue BEFORE recording the delivery, keyed by the delivery id so arq dedups. Recording
+    # first would let a crash (or an enqueue failure) between record and enqueue strand an *acked*
+    # event that never gets processed. This way, if anything after the enqueue fails, GitHub
+    # redelivers and we enqueue the *same* job id → one job, no lost event. Enqueue failure → 500.
+    try:
+        await enqueue_event(x_github_event, payload, job_id=x_github_delivery)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail="failed to enqueue; the event will be redelivered"
+        ) from exc
+
+    await try_record_delivery(session, delivery_id=x_github_delivery, event_type=x_github_event)
+    return {"status": "accepted", "event": x_github_event, "delivery": x_github_delivery}

@@ -459,6 +459,13 @@ async def list_targets(session: AsyncSession, *, campaign_id: int) -> list[Campa
     return list((await session.scalars(stmt)).all())
 
 
+async def delivery_seen(session: AsyncSession, delivery_id: str) -> bool:
+    """True if this ``X-GitHub-Delivery`` was already recorded — the fast-ack cache the ingestor
+    checks to short-circuit a redelivery without re-running side effects (review 3, N4)."""
+    stmt = select(ProcessedDelivery.delivery_id).where(ProcessedDelivery.delivery_id == delivery_id)
+    return (await session.scalar(stmt)) is not None
+
+
 async def try_record_delivery(
     session: AsyncSession, *, delivery_id: str, event_type: str | None
 ) -> bool:
