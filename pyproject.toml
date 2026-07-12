@@ -43,6 +43,7 @@ dev = [
     "pytest-httpx>=0.34",
     "hypothesis>=6.100",
     "ruff>=0.8",
+    "aiosqlite>=0.20",  # async SQLite driver for the DB-backed test suite
 ]
 
 [project.scripts]
