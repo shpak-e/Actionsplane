@@ -50,6 +50,7 @@ from actionsplane.db.repository import (
     latest_runs_for,
     list_all_workflows,
     list_bindings,
+    list_failing_jobs,
     list_jobs,
     list_repos,
     list_runs,
@@ -312,16 +313,23 @@ async def get_repo_findings(
     return [FindingOut.model_validate(f, from_attributes=True) for f in findings]
 
 
-async def _failing_step(session: AsyncSession, run_id: int) -> tuple[str | None, str | None]:
-    """For a failed run, find the (job, step) that failed — the first failing step in the first
-    failing job. Returns (job_name, step_name); either may be None if steps weren't recorded."""
-    for job in await list_jobs(session, run_id=run_id):
-        if job.conclusion == "failure":
-            for step in _job_steps(job):
-                if step.get("conclusion") == "failure":
-                    return job.name, step.get("name")
-            return job.name, None
-    return None, None
+async def _failing_steps_for(
+    session: AsyncSession, run_ids: list[int]
+) -> dict[int, tuple[str | None, str | None]]:
+    """Batched (job, step) failure detail for many runs at once — one query, not one per run.
+
+    For each run: the first failing step in the first failing job (jobs ordered by id, mirroring
+    their lifecycle order). Returns ``{run_id: (job_name, step_name)}``; a run with no failing job
+    is simply absent. Replaces the per-node ``_failing_step`` that made ``/pipelines`` N+1."""
+    out: dict[int, tuple[str | None, str | None]] = {}
+    for job in await list_failing_jobs(session, run_ids):
+        if job.run_id in out:
+            continue  # first failing job per run wins (query is ordered by run_id, id)
+        step_name = next(
+            (s.get("name") for s in _job_steps(job) if s.get("conclusion") == "failure"), None
+        )
+        out[job.run_id] = (job.name, step_name)
+    return out
 
 
 @router.get("/pipelines", response_model=PipelineGraphOut)
@@ -339,6 +347,11 @@ async def get_pipelines(session: AsyncSession = Depends(get_session)) -> Pipelin
         if (rel.repo_id, rel.path) in wf_by_key
     ]
     latest = await latest_runs_for(session, wf_ids)
+    # One batched query for the failing (job, step) of every failed latest-run, instead of a
+    # per-node round-trip (the old N+1). Keyed by run id.
+    failing = await _failing_steps_for(
+        session, [run.id for run in latest.values() if run.conclusion == "failure"]
+    )
 
     items = []
     for rel in relations:
@@ -350,7 +363,7 @@ async def get_pipelines(session: AsyncSession = Depends(get_session)) -> Pipelin
         if run is not None:
             failed_job = failed_step = None
             if run.conclusion == "failure":
-                failed_job, failed_step = await _failing_step(session, run.id)
+                failed_job, failed_step = failing.get(run.id, (None, None))
             status = {
                 "status": run.status,
                 "conclusion": run.conclusion,

@@ -9,9 +9,9 @@ them to response models.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
-from sqlalchemy import case, delete, null, or_, select, update
+from sqlalchemy import case, delete, func, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -136,23 +136,72 @@ async def list_all_workflows(session: AsyncSession) -> list[Workflow]:
     return list((await session.scalars(select(Workflow))).all())
 
 
-async def latest_runs_for(session: AsyncSession, workflow_ids: list[int]) -> dict[int, WorkflowRun]:
+class LatestRun(NamedTuple):
+    """The few run columns the Pipelines graph needs — deliberately *not* the whole ORM row, so
+    the heavy ``raw_payload`` JSONB is never fetched for a status annotation (Phase 5.3 / review 3).
+    """
+
+    id: int
+    workflow_id: int
+    status: str | None
+    conclusion: str | None
+    run_number: int
+
+
+async def latest_runs_for(session: AsyncSession, workflow_ids: list[int]) -> dict[int, LatestRun]:
     """The most recent run per workflow id (by ``created_at``), for the given workflow ids.
 
-    Scoped to the supplied ids (the Pipelines graph passes just its workflows) so this stays cheap
-    even on a large run history. Returns ``{workflow_id: WorkflowRun}``.
+    One indexed query regardless of history size: a ``ROW_NUMBER() OVER (PARTITION BY workflow_id
+    ORDER BY created_at DESC)`` window keeps just the newest row per workflow, instead of streaming
+    every run for those workflows into Python. Only the status columns are selected — never
+    ``raw_payload``. The window form is dialect-portable (PG + sqlite ≥ 3.25). Returns
+    ``{workflow_id: LatestRun}``.
     """
     if not workflow_ids:
         return {}
-    stmt = (
-        select(WorkflowRun)
-        .where(WorkflowRun.workflow_id.in_(workflow_ids))
-        .order_by(WorkflowRun.created_at.desc())
+    rn = func.row_number().over(
+        partition_by=WorkflowRun.workflow_id,
+        order_by=(WorkflowRun.created_at.desc(), WorkflowRun.id.desc()),  # id breaks created ties
     )
-    out: dict[int, WorkflowRun] = {}
-    for run in (await session.scalars(stmt)).all():
-        out.setdefault(run.workflow_id, run)  # first seen = newest (desc order)
-    return out
+    ranked = (
+        select(
+            WorkflowRun.id,
+            WorkflowRun.workflow_id,
+            WorkflowRun.status,
+            WorkflowRun.conclusion,
+            WorkflowRun.run_number,
+            rn.label("rn"),
+        )
+        .where(WorkflowRun.workflow_id.in_(workflow_ids))
+        .subquery()
+    )
+    stmt = select(
+        ranked.c.id, ranked.c.workflow_id, ranked.c.status, ranked.c.conclusion, ranked.c.run_number
+    ).where(ranked.c.rn == 1)
+    rows = (await session.execute(stmt)).all()
+    return {
+        row.workflow_id: LatestRun(
+            row.id, row.workflow_id, row.status, row.conclusion, row.run_number
+        )
+        for row in rows
+    }
+
+
+async def list_failing_jobs(session: AsyncSession, run_ids: list[int]) -> list[WorkflowJob]:
+    """All failed jobs across the given runs, in one query, ordered ``(run_id, id)`` (review 3).
+
+    Replaces the per-run job fetch behind the Pipelines "which step failed?" annotation: the caller
+    groups by ``run_id`` and takes the first failing job per run. ``raw_payload`` is loaded (the
+    step list lives there) but only for *failed* jobs of *failed* runs, so it stays bounded.
+    """
+    if not run_ids:
+        return []
+    stmt = (
+        select(WorkflowJob)
+        .where(WorkflowJob.run_id.in_(run_ids), WorkflowJob.conclusion == "failure")
+        .order_by(WorkflowJob.run_id, WorkflowJob.id)
+    )
+    return list((await session.scalars(stmt)).all())
 
 
 async def get_repo(session: AsyncSession, repo_id: int) -> Repo | None:
