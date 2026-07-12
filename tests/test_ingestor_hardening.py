@@ -148,3 +148,42 @@ def test_missing_delivery_header_rejected(app):
             },
         )
     assert r.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "delivery",
+    [
+        "has space",
+        "star*key",
+        "colon:key",
+        "line\nbreak",
+        "x" * 65,  # over the 64-char bound
+    ],
+)
+def test_malformed_delivery_header_rejected_before_enqueue(app, delivery):
+    """The delivery id becomes a Redis key; a replayed delivery could vary it freely. Reject
+    anything outside the safe opaque-token shape before it reaches Redis (review 4, NEW-5)."""
+    fa, enqueue_calls, _seen, _control = app
+    body = json.dumps({"workflow_run": {"id": 1}, "repository": {"id": 9}}).encode()
+    with TestClient(fa) as client:
+        r = client.post(
+            "/webhook",
+            content=body,
+            headers={
+                "X-GitHub-Event": "workflow_run",
+                "X-GitHub-Delivery": delivery,
+                "X-Hub-Signature-256": compute_signature(SECRET, body),
+            },
+        )
+    assert r.status_code == 400
+    assert enqueue_calls == []  # never reached the queue
+
+
+def test_valid_uuid_delivery_accepted(app):
+    """A real GitHub delivery GUID passes the shape check."""
+    fa, enqueue_calls, _seen, _control = app
+    body = json.dumps({"workflow_run": {"id": 1}, "repository": {"id": 9}}).encode()
+    with TestClient(fa) as client:
+        r = _post(client, body, delivery="72d3162e-cc78-11e3-81ab-4c9367dc0958")
+    assert r.status_code == 200
+    assert len(enqueue_calls) == 1

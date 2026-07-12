@@ -131,6 +131,24 @@ async def test_cross_origin_pagination_link_is_ignored():
 
 
 @pytest.mark.asyncio
+async def test_same_origin_normalises_cosmetic_differences():
+    """A GHES rel=next that differs only by case or an explicit :443 is the same origin — it must
+    NOT be treated as cross-origin and truncate pagination (review 4, NEW-10). But userinfo bypass
+    shapes (``host@evil``) and non-https must still be refused (review 3, N3 unbroken)."""
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))) as c:
+        gh = GitHubClient("tok", client=c, api_url="https://api.github.com")
+        # same origin despite cosmetic differences
+        assert gh._same_origin("https://api.github.com/x") is True
+        assert gh._same_origin("https://API.GITHUB.COM/x") is True
+        assert gh._same_origin("https://api.github.com:443/x") is True
+        # still refused
+        assert gh._same_origin("https://api.github.com@evil.com/x") is False
+        assert gh._same_origin("https://api.github.com.evil.com/x") is False
+        assert gh._same_origin("http://api.github.com/x") is False
+        assert gh._same_origin("https://api.github.com:8443/x") is False  # non-default port differs
+
+
+@pytest.mark.asyncio
 async def test_list_workflow_runs_passes_created_filter():
     """The reconcile window (review 3, 4b) rides GitHub's server-side ``created`` filter."""
     captured = {}

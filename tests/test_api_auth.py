@@ -139,3 +139,6 @@ def test_writes_fail_closed_in_tokenless_mode(monkeypatch):
             "/api/v1/repos/1/sarif/upload",
         ):
             assert client.post(path).status_code == 403, path  # writes fail closed
+        # the write-audit trail is operator-grade, so it's gated like a write even for reads
+        # (review 4, NEW-11): world-unreadable in tokenless open mode.
+        assert client.get("/api/v1/audit-log").status_code == 403

@@ -19,7 +19,7 @@ from actionsplane.github.app_auth import (
     fetch_installation_token,
     load_private_key,
 )
-from actionsplane.github.client import GitHubClient
+from actionsplane.github.client import GitHubClient, InstallationCache
 
 # installation_id -> cached token (with expiry); refreshed when expired
 TokenCache = dict[int, InstallationToken]
@@ -29,11 +29,11 @@ TokenCache = dict[int, InstallationToken]
 _install_locks: dict[int, asyncio.Lock] = {}
 _locks_meta = asyncio.Lock()
 
-# One long-lived GitHubClient per installation (review 3, 4c). Reusing the instance keeps its
-# ETag cache alive across repos and sweeps, so a steady-state sweep re-validates with cheap 304s
-# instead of re-downloading. Each call rebinds the (refreshed) token + the sweep's httpx client.
-# Bounded by the installation count, which is small.
-_clients: dict[int, GitHubClient] = {}
+# One long-lived ETag/rate-budget cache per installation (review 3, 4c). Every call builds a
+# *fresh* GitHubClient bound to that call's httpx client but sharing this cache, so a steady-state
+# sweep re-validates with cheap 304s while concurrent sweeps never share a closeable client object
+# (review 4, NEW-1). Bounded by the installation count, which is small.
+_caches: dict[int, InstallationCache] = {}
 
 
 async def _lock_for(installation_id: int) -> asyncio.Lock:
@@ -69,11 +69,10 @@ async def client_for_installation(
                 )
                 if token_cache is not None:
                     token_cache[installation_id] = cached
-    # Reuse the installation's client (preserving its ETag cache); rebind the fresh token + http.
-    gh = _clients.get(installation_id)
-    if gh is None:
-        gh = GitHubClient(cached.token, client=http)
-        _clients[installation_id] = gh
-    else:
-        gh.rebind(token=cached.token, client=http)
-    return gh
+    # A fresh client per call, bound to this call's httpx transport but sharing the installation's
+    # ETag/rate-budget cache. Concurrent sweeps each own their own client, so one finishing and
+    # closing its transport can't break another mid-request; the shared cache still 304s (NEW-1).
+    cache = _caches.get(installation_id)
+    if cache is None:
+        cache = _caches.setdefault(installation_id, InstallationCache())
+    return GitHubClient(cached.token, client=http, cache=cache)
