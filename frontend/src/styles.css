@@ -218,6 +218,32 @@ select.input:hover { border-color: var(--fg-subtle); }
   transition: background 0.15s, color 0.15s;
 }
 .icon-btn:hover { background: var(--surface-3); color: var(--fg); }
+.icon-btn.on { color: var(--accent); border-color: var(--border); background: var(--surface); }
+
+/* ---------- settings / operate-token menu ---------- */
+
+.settings { position: relative; display: inline-flex; }
+.settings-scrim { position: fixed; inset: 0; z-index: 45; }
+.settings-pop {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 46;
+  width: 300px; padding: 14px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  box-shadow: var(--shadow-drawer); animation: fade 0.15s ease;
+}
+.settings-label { font-size: 13px; font-weight: 600; color: var(--fg); }
+.settings-hint { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--fg-subtle); }
+.settings-hint code {
+  font-size: 11px; padding: 1px 4px; border-radius: 4px;
+  background: var(--surface-3); color: var(--fg-muted);
+}
+.settings-input {
+  width: 100%; box-sizing: border-box; margin-top: 2px;
+  padding: 7px 10px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, monospace;
+  background: var(--canvas); color: var(--fg);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+}
+.settings-input:focus { outline: none; border-color: var(--accent); }
+.settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 /* ---------- cards & tables ---------- */
 

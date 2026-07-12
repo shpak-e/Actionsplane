@@ -8,6 +8,7 @@ import { SecurityTab } from "./components/SecurityTab";
 import { DriftTab } from "./components/DriftTab";
 import { PipelinesTab } from "./components/PipelinesTab";
 import { SyncButton } from "./components/SyncButton";
+import { SettingsMenu } from "./components/SettingsMenu";
 import { IconActivity, IconGraph, IconLayers, IconShield } from "./components/ui";
 import { useEventStream } from "./hooks/useEventStream";
 import { useMode } from "./hooks/useMode";
@@ -71,6 +72,8 @@ export default function App() {
             {connected ? "Live" : "Offline"}
           </span>
         )}
+
+        <SettingsMenu />
       </header>
 
       <div className="body">

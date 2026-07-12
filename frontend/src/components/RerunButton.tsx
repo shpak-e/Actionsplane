@@ -1,18 +1,25 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { useHasOperateToken } from "../lib/auth";
 import { IconCheck, IconRefresh } from "./ui";
 
 /**
  * Re-run a workflow on GitHub via the backend. Compact icon by default; `withLabel` renders the
  * full button used in the run drawer. Errors (e.g. App not configured, missing actions:write
  * scope) surface in the tooltip and turn the control red.
+ *
+ * Hidden entirely until an operate token is set (via the header key menu): without one the write
+ * would fail closed 401/403, so a dead button is worse than none (review 4, NEW-3).
  */
 export function RerunButton({ runId, withLabel = false }: { runId: number; withLabel?: boolean }) {
+  const hasToken = useHasOperateToken();
   const qc = useQueryClient();
   const m = useMutation({
     mutationFn: () => api.rerun(runId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["runs"] }),
   });
+
+  if (!hasToken) return null;
 
   const title = m.isError
     ? `Re-run failed: ${(m.error as Error).message}`
