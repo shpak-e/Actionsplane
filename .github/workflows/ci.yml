@@ -1,7 +1,8 @@
-# CI — lint + test. We dogfood ActionsPlane's own thesis: third-party actions are
-# SHA-pinned (not @v4) so a tag-retargeting attack can't silently change what runs here.
-# uv is installed via the official script rather than a third-party action to keep the
-# action surface minimal.
+# CI — lint, test, typecheck the frontend, apply migrations on real Postgres, and audit
+# our own workflows. We dogfood ActionsPlane's own thesis: third-party actions are
+# SHA-pinned (not @v4) so a tag-retargeting attack can't silently change what runs here,
+# and every checkout drops its credential (`persist-credentials: false`) so a later step
+# can't reuse it. uv is installed via the official script to keep the action surface minimal.
 name: ci
 
 on:
@@ -9,21 +10,30 @@ on:
     branches: [main]
   pull_request:
 
+# One in-flight run per ref; a new push cancels the superseded run instead of queueing.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  lint-and-test:
+  backend:
+    name: backend
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      # actions/checkout@v4.1.1
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
 
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
-      - name: Sync dependencies
-        run: uv sync --extra dev
+      - name: Sync dependencies (locked)
+        run: uv sync --frozen --extra dev
 
       - name: Lint
         run: |
@@ -32,3 +42,101 @@ jobs:
 
       - name: Test
         run: uv run pytest -q
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      # actions/setup-node@v4.1.0
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies (locked)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run lint  # tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+  migrations:
+    name: migrations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: actionsplane
+          POSTGRES_PASSWORD: actionsplane
+          POSTGRES_DB: actionsplane
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U actionsplane"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Point alembic at the service container instead of the config default.
+      ACTIONSPLANE_DATABASE_URL: postgresql+asyncpg://actionsplane:actionsplane@localhost:5432/actionsplane
+    steps:
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Sync dependencies (locked)
+        run: uv sync --frozen --extra dev
+
+      - name: Apply migrations to head
+        run: uv run alembic upgrade head
+
+      - name: Round-trip the latest migration (down then up)
+        run: |
+          uv run alembic downgrade -1
+          uv run alembic upgrade head
+
+  security:
+    name: security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Audit our own workflows (zizmor)
+        env:
+          # Lets zizmor run its online checks (impostor-commit, ref-confusion,
+          # known-vulnerable-actions) against the pinned action SHAs.
+          GH_TOKEN: ${{ github.token }}
+        run: uvx zizmor@1 --persona=regular .github/workflows/
+
+      - name: Dependency CVE scan (pip-audit, non-blocking)
+        # Advisories can land against transitive deps we can't immediately fix; surface them
+        # without blocking merges (Dependabot files the fix PRs). Flip to blocking once green.
+        continue-on-error: true
+        run: |
+          uv export --frozen --no-emit-project --no-hashes --format requirements-txt -o /tmp/requirements.txt
+          uvx pip-audit -r /tmp/requirements.txt

@@ -5,6 +5,7 @@
 > [!WARNING]
 > **🚧 Work in progress — testing/preview, NOT a production-ready product.**
 > ActionsPlane is under active development and has not yet been validated against a real GitHub org end-to-end. Interfaces, schema, and behaviour may change without notice. **Do not run this against production repositories or rely on it for security-critical workflows.** Use at your own risk, in a sandbox, for evaluation only.
+> This repository is **public for CI and evaluation only** — it is neither released nor supported, and nothing here should be treated as stable.
 
 Teams that own many repos juggle four problems no single OSS tool solves end-to-end: status fragmentation (N tabs to see if builds are green), workflow drift (the same workflow copy-pasted everywhere slowly diverges), supply-chain blindness (unpinned actions, over-broad `GITHUB_TOKEN` scopes), and no cross-repo metrics (which repo burns the most minutes? which workflow is flakiest?). ActionsPlane combines the **observe + audit + edit** triangle that existing tools only cover in fragments — and does all edits safely, through PRs.
 
