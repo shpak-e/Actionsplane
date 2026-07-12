@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     github_api_url: str = "https://api.github.com"
     api_url: str = "http://localhost:8000"  # ActionsPlane API base (for the CLI)
     api_token: str | None = Field(default=None, repr=False)  # if set, /api/v1 requires it
+    # Optional read-only token (minimal RBAC, plan §8 / Phase 5.2). When set, it grants access
+    # to the read endpoints only; every mutating endpoint still demands the operate token
+    # (``api_token``) and answers 403 to the read token. Fail-closed: configuring only the
+    # read token leaves the write paths unreachable rather than open.
+    api_read_token: str | None = Field(default=None, repr=False)
 
     # --- offline mode (no GitHub App; pull a fixed list of public repos on demand) ---
     # Comma-separated `owner/repo` or repo URLs. When set, the system runs read-only over the
@@ -43,6 +48,16 @@ class Settings(BaseSettings):
     # --- behaviour ---
     poll_interval_seconds: int = 300  # reconciliation safety net (see plan §4)
     fetch_concurrency: int = 8  # max repos processed in parallel by the sweeps
+    # Per-installation rate-limit budget floor (Phase 5.5). When a sweep observes
+    # X-RateLimit-Remaining below this, it stops starting new repos (gracefully — the rest are
+    # picked up by the next sweep) instead of burning the budget the webhooks/API also need.
+    # 0 disables the guard.
+    rate_limit_floor: int = 250
+    # Payload retention (Phase 5.6). ``raw_payload`` JSONB on runs/jobs is nulled after this many
+    # days (normalized columns are kept, so history stays queryable); processed webhook delivery
+    # ids are deleted after theirs. 0 disables that pruning dimension.
+    raw_payload_retention_days: int = 90
+    delivery_retention_days: int = 30
     bulk_edits_enabled: bool = False  # opt-in per install; gates contents:write
     # Opt-in (mirrors bulk_edits_enabled): only when true do we request `security_events: write`
     # and push findings to GitHub Code Scanning. Off by default so the scope isn't requested

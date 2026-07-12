@@ -14,6 +14,8 @@ import json
 import logging
 import re
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -30,6 +32,24 @@ _API_VERSION = "2022-11-28"
 _NEXT_LINK_RE = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
 
 
+@dataclass(frozen=True, slots=True)
+class RateBudget:
+    """Last-observed primary rate-limit budget for one token (Phase 5.5).
+
+    Parsed from the ``X-RateLimit-*`` response headers GitHub sends on every call, so tracking
+    it costs no extra requests. ``remaining`` is None until the first response is seen (or when
+    GitHub omits the headers, e.g. some proxies) — callers must treat unknown as "don't pause".
+    """
+
+    remaining: int | None = None
+    limit: int | None = None
+    reset_at: datetime | None = None
+
+    def below(self, floor: int) -> bool:
+        """True when the observed budget has dropped under ``floor`` (unknown → False)."""
+        return floor > 0 and self.remaining is not None and self.remaining < floor
+
+
 class GitHubClient:
     """Authenticated client for one installation token."""
 
@@ -43,6 +63,31 @@ class GitHubClient:
         # url -> (etag, parsed-json body). Lets steady-state sweeps reuse cached responses via
         # conditional requests (304 Not Modified is free under GitHub's primary rate limit).
         self._etag_cache: dict[str, tuple[str, object]] = {}
+        # Last-observed X-RateLimit-* budget for this token (one client per installation token,
+        # so this is the per-install view). Updated on every response, including 304s and errors.
+        self._rate_budget = RateBudget()
+
+    @property
+    def rate_budget(self) -> RateBudget:
+        """Immutable snapshot of the last-observed rate-limit budget for this client's token."""
+        return self._rate_budget
+
+    def _note_rate_headers(self, headers: httpx.Headers) -> None:
+        """Record the X-RateLimit-* headers, ignoring absent/garbled values."""
+        raw = headers.get("x-ratelimit-remaining")
+        if raw is None:
+            return
+        try:
+            remaining = int(raw)
+            limit = int(headers["x-ratelimit-limit"]) if "x-ratelimit-limit" in headers else None
+            reset_at = (
+                datetime.fromtimestamp(int(headers["x-ratelimit-reset"]), tz=UTC)
+                if "x-ratelimit-reset" in headers
+                else None
+            )
+        except (ValueError, OSError):  # a proxy mangled the headers — keep the old snapshot
+            return
+        self._rate_budget = RateBudget(remaining=remaining, limit=limit, reset_at=reset_at)
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -80,6 +125,7 @@ class GitHubClient:
             headers["If-None-Match"] = cached[0]
         for attempt in (0, 1):
             resp = await self._client.get(url, headers=headers, params=params)
+            self._note_rate_headers(resp.headers)
             if resp.status_code in (429, 403) and resp.headers.get("retry-after") and attempt == 0:
                 await asyncio.sleep(min(float(resp.headers["retry-after"]), 60))
                 continue

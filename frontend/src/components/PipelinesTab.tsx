@@ -14,7 +14,7 @@ const EDGE_META: Record<string, { label: string; cls: string }> = {
 
 // A small, theme-aligned palette. Each distinct repo gets a stable colour so a cross-repo hop
 // (the thing that was hard to see before) reads at a glance: the card colour changes across the arrow.
-const REPO_PALETTE = ["#5b9dff", "#3fb950", "#d29922", "#bc8cff", "#ff7b72", "#56d4dd", "#e3b341"];
+const REPO_PALETTE = ["#d97757", "#7d9b76", "#6a8caf", "#c9a227", "#9a6a8f", "#5e8d87", "#b08b5e"];
 
 function buildRepoColors(nodes: PipelineNode[]): Map<string, string> {
   const repos = Array.from(new Set(nodes.map((n) => n.repo))).sort();
