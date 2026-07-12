@@ -29,6 +29,12 @@ TokenCache = dict[int, InstallationToken]
 _install_locks: dict[int, asyncio.Lock] = {}
 _locks_meta = asyncio.Lock()
 
+# One long-lived GitHubClient per installation (review 3, 4c). Reusing the instance keeps its
+# ETag cache alive across repos and sweeps, so a steady-state sweep re-validates with cheap 304s
+# instead of re-downloading. Each call rebinds the (refreshed) token + the sweep's httpx client.
+# Bounded by the installation count, which is small.
+_clients: dict[int, GitHubClient] = {}
+
 
 async def _lock_for(installation_id: int) -> asyncio.Lock:
     async with _locks_meta:
@@ -63,4 +69,11 @@ async def client_for_installation(
                 )
                 if token_cache is not None:
                     token_cache[installation_id] = cached
-    return GitHubClient(cached.token, client=http)
+    # Reuse the installation's client (preserving its ETag cache); rebind the fresh token + http.
+    gh = _clients.get(installation_id)
+    if gh is None:
+        gh = GitHubClient(cached.token, client=http)
+        _clients[installation_id] = gh
+    else:
+        gh.rebind(token=cached.token, client=http)
+    return gh

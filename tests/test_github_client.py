@@ -109,6 +109,45 @@ async def test_list_workflow_runs_respects_max_runs():
 
 
 @pytest.mark.asyncio
+async def test_list_workflow_runs_passes_created_filter():
+    """The reconcile window (review 3, 4b) rides GitHub's server-side ``created`` filter."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"workflow_runs": [BARE_RUN]})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
+        await gh.list_workflow_runs("acme", "infra", created=">=2026-07-01", max_runs=100)
+
+    assert captured["params"].get("created") == ">=2026-07-01"
+
+
+@pytest.mark.asyncio
+async def test_etag_conditional_request_reuses_cached_body():
+    """A reused client sends If-None-Match on the 2nd call; the 304 returns the cached body — the
+    ETag cache survives across calls, which is what per-installation client reuse buys (4c)."""
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if request.headers.get("if-none-match") == '"etag-1"':
+            return httpx.Response(304, headers={"ETag": '"etag-1"'})
+        return httpx.Response(200, json={"workflow_runs": [BARE_RUN]}, headers={"ETag": '"etag-1"'})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
+        first = await gh.list_workflow_runs("acme", "infra")
+        second = await gh.list_workflow_runs("acme", "infra")  # same client → cache hit → 304
+
+    assert calls["n"] == 2
+    assert [r["id"] for r in first] == [r["id"] for r in second]  # 304 served the cached page
+
+
+@pytest.mark.asyncio
 async def test_list_and_get_workflow_files():
     import base64
 

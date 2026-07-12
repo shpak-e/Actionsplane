@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
-from sqlalchemy import case, delete, func, null, or_, select, update
+from sqlalchemy import and_, case, delete, func, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,16 +60,20 @@ async def upsert_repo(
     await _upsert(session, Repo, {**values, "installation_id": installation_id})
 
 
-async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> None:
-    """Upsert a run, but never let a stale event overwrite a fresher row.
+async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> int:
+    """Upsert a run, never letting a stale event overwrite a fresher row. Returns rows written.
 
     GitHub delivers ``workflow_run`` events at-least-once and out of order, so a late
     ``in_progress`` redelivery can arrive *after* the ``completed`` event for the same run id.
     An unconditional upsert would regress the row from completed back to in-progress. The run's
-    ``updated_at`` (monotonic across GitHub state transitions) gates the update: it only applies
-    when the incoming event is not older than the stored row — or when the stored row predates
-    this column (legacy rows, ``updated_at IS NULL``). The guard stays in SQL so the check and
-    the write are atomic; doing it as read-then-write would reopen the race under concurrency.
+    ``updated_at`` (monotonic across GitHub state transitions) gates the update.
+
+    The guard is *strict* (review 3, 4a): it applies only when the incoming event is strictly
+    newer, or exactly as new **and** actually changes ``status``/``conclusion`` (an equal-timestamp
+    conclusion correction — the same nuance as the job gate). An identical redelivery — the common
+    case for a reconcile sweep replaying already-seen runs — matches nothing and writes 0 rows, so
+    an idle repo churns no rows and dirties no indexes. Legacy rows (``updated_at IS NULL``) still
+    take the update. Staying in SQL keeps the check-and-write atomic under concurrency.
     """
     stmt = _conflict_insert(session)(WorkflowRun).values(**values)
     update_cols = {c: stmt.excluded[c] for c in values if c != "id"}
@@ -78,10 +82,18 @@ async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> None:
         set_=update_cols,
         where=or_(
             WorkflowRun.updated_at.is_(None),
-            WorkflowRun.updated_at <= stmt.excluded["updated_at"],
+            WorkflowRun.updated_at < stmt.excluded["updated_at"],  # strictly newer → apply
+            and_(  # same timestamp, but a real status/conclusion change (correction) → apply
+                WorkflowRun.updated_at == stmt.excluded["updated_at"],
+                or_(
+                    WorkflowRun.status.is_distinct_from(stmt.excluded["status"]),
+                    WorkflowRun.conclusion.is_distinct_from(stmt.excluded["conclusion"]),
+                ),
+            ),
         ),
     )
-    await session.execute(stmt)
+    result = await session.execute(stmt)
+    return result.rowcount
 
 
 async def upsert_installation(session: AsyncSession, values: dict[str, Any]) -> None:

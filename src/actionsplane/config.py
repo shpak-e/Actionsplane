@@ -47,6 +47,10 @@ class Settings(BaseSettings):
 
     # --- behaviour ---
     poll_interval_seconds: int = 300  # reconciliation safety net (see plan §4)
+    # How far back the reconcile sweep asks GitHub for runs (server-side ``created>=`` filter,
+    # review 3, 4b). A dropped webhook is redelivered within hours, so a day is ample; keeping it
+    # tight means an idle repo's reconcile is a cheap 304 instead of paging deep history.
+    reconcile_lookback_hours: int = 24
     fetch_concurrency: int = 8  # max repos processed in parallel by the sweeps
     # Per-installation rate-limit budget floor (Phase 5.5). When a sweep observes
     # X-RateLimit-Remaining below this, it stops starting new repos (gracefully — the rest are
