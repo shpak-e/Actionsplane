@@ -152,18 +152,65 @@ DONE in session 5 (the rest of the v1.1 backlog):
   `tests/test_tracing.py` (in-memory exporter proves parent/child + same trace_id).
 - ✅ **hypothesis property tests** — `tests/test_property.py` (classify + pin-edit invariants).
 
-STILL LEFT (post-v1.1):
-1. **Live validation** — the ONLY remaining backlog item. Never run against real GitHub (App +
-   webhook tunnel). User will test ~next day. Will produce the HTTP cassette corpus for write-path
-   tests. Real-Postgres half already validated (session 4).
-2. **Job-upsert ordering** — `upsert_job` has the same latent out-of-order bug as `upsert_run` had,
-   but no monotonic `updated_at` on the `workflow_job` payload — needs a status-rank gate, deferred.
-3. **Big bet (directions-research):** orchestration + evidence plane on top of GitHub's 2026 native
-   primitives (lock-files, scoped secrets, egress firewall, Actions Data Stream).
-4. **Other directions:** MCP server (writes=gated PRs); audit AI-authored workflow changes;
-   over-scoped/inherited-secret audit; CI FinOps. More edit ops: bump-pins, set-permissions,
-   inject-step. GitLab observe/edit pillars (deferred to v2 per staff-review). Possible Pipelines
-   v2: intra-workflow job-`needs:` DAG drill-in inside the run drawer.
+DONE in session 6 (2026-07-03 — Phase 5 trust hardening, all but live validation; **157 tests**,
+migration **0010**, ruff clean; details in plan.md §14):
+- ✅ **5.2 Write-op audit log + RBAC** — `write_audit_log` table (0010) + `record_write_audit`/
+  `list_write_audit`; every mutating endpoint (`campaign create/apply`, `rerun`, `sarif upload`,
+  `offline sync`, `template/binding create`) records actor+action+target+detail (PR URLs);
+  `GET /api/v1/audit-log` (operate-only). RBAC: `api/auth.py` reworked — pure `classify_actor`
+  core, `require_token` (read) / `require_operate` (403 on read token); new
+  `ACTIONSPLANE_API_READ_TOKEN`; no-tokens=open unchanged; read-only config fail-closed for writes.
+- ✅ **5.3 Sweep leases** — `leases` table (0010) + `claim_lease` atomic dialect-portable
+  conditional upsert (claim iff free/expired/self; self-claim = TTL refresh). Wraps reconcile
+  (TTL=poll interval), audit_all, drift_sweep, prune (TTL 3600). Denied → skip+log. replicas>1 safe.
+- ✅ **5.4 Job-upsert ordering gate** — `upsert_job` conditional upsert gated on inline SQL `CASE`
+  status rank (queued=0<in_progress=1<completed=2); equal-completed still applies (conclusion
+  corrections). Atomic, portable, no migration. `tests/test_repository_job_ordering.py`.
+- ✅ **5.5 Rate budget** — `RateBudget` frozen dataclass in `github/client.py`, parsed from
+  `X-RateLimit-*` on every response (incl. 304/errors); `client.rate_budget`;
+  `ACTIONSPLANE_RATE_LIMIT_FLOOR` (250); `RateGate` in worker pauses all three sweeps gracefully
+  (unstarted repos deferred to next tick, single warning).
+- ✅ **5.6 Retention pruning** — `ACTIONSPLANE_RAW_PAYLOAD_RETENTION_DAYS` (90, 0=off) /
+  `ACTIONSPLANE_DELIVERY_RETENTION_DAYS` (30); daily 04:45 lease-guarded cron nulls `raw_payload`
+  on old runs/jobs (normalized columns kept — history queryable) + deletes old
+  `processed_deliveries`; LIMIT-batched loops. **Real bug found:** `values(raw_payload=None)` on
+  JSONB binds JSON `'null'`, not SQL NULL (`none_as_null=False`) — infinite prune loop; fixed with
+  `sqlalchemy.null()`.
+- ✅ **UI renovation (Claude design language)** — `styles.css` full token swap: warm paper
+  `#FAF9F5`/white cards/warm hairlines, ink `#141413`, terracotta accent `#D97757` (buttons, active
+  tab pill, focus rings, live pulse), soft status tints (sage/clay/ochre), serif display stack for
+  headings/stat values/gauge, pill segmented tabs, warm scrim drawer, pipelines repo palette →
+  warm categorical (terracotta/sage/slate/ochre/plum) with precise-solid vs heuristic-dashed kept.
+  Also `PipelinesTab.tsx` palette, `ui.tsx` ScoreRing, `RunDetail.tsx` dots, `index.html`
+  theme-color/title. tsc + vite build verified clean. No class renames, no new deps.
+
+STILL LEFT — phased v2 roadmap (`plan.md` §14, rationale in `docs/architect-review-2026-07.md`):
+
+**Phase 5 — remaining:**
+1. **5.1 Live validation (THE blocker)** — never run against real GitHub (App + webhook tunnel).
+   Ingest→audit→SARIF→campaign dry-run→PR; produces the write-path cassette corpus. Real-Postgres
+   half done (session 4). Note: suite last run on sandbox py3.10 with StrEnum/UTC shim — re-run
+   `make test` on the real 3.12 machine first.
+
+**Phase 6 — Policy-era wedge (new headline features; positioning rotated to "fleet remediation
+engine for GitHub's native enforcement"):**
+7. **Policy-readiness simulator** — evaluate GitHub SHA-pin policy / execution protections against
+   the stored fleet AST ("this policy breaks 47 workflows in 23 repos") → one-click fix campaign.
+   Reuses audit+campaign machinery; the project's best demo.
+8. **Lockfile campaigns** — generate/verify/refresh GitHub's `dependencies:` lockfile fleet-wide
+   (public preview ~Q4 2026; day-one gap).
+9. **SARIF ingest → converge-PRs** — emit side done; ingest is the missing half of the headline.
+10. Edit ops the simulator needs: `set-permissions`, `bump-pins`, `inject-step`.
+
+**Phase 7 — Observe v2:** Actions Data Stream ingest adapter (S3); metric rollups + retention;
+Renovate/Dependabot coexistence detection; Pipelines v2 job-`needs:` DAG drill-in.
+
+**Phase 8 — Enterprise & breadth:** scoped-secrets migration campaigns; GHES support; LLM-assisted
+remediation (human-approved PR gate stays); MCP server (writes=gated PRs); GitLab observe/edit.
+
+**DEPRIORITIZED (2026-07 research — losing bets vs. GitHub native):** workflow-log secret-leak
+scan; runner/ARC fleet posture; generic Rego/CEL policy engine (narrowed to the simulator); deep
+GitLab work before live validation.
 
 ## 5. Key decisions / conventions
 - **Pure core, thin I/O:** audit/drift/metrics/operations are side-effect-free over typed models; services do the I/O. Maximizes testability.
@@ -212,6 +259,7 @@ After editing portfolio markdown: `cd ~/Desktop/Claude/Projects && python script
 - `docs/multi-ci-research.md` — GitLab next, avoid Jenkins (Groovy), provider-abstraction sketch.
 - `docs/review-findings-2.md` — second security/perf review (apply-path + rate-limit items).
 - `docs/directions-research.md` — landscape shift (GitHub 2026 primitives), new bets (MCP, AI-workflow audit), best-practices checklist.
+- `docs/architect-review-2026-07.md` — external-lens review + July-2026 market re-check (GitHub 2026 security roadmap details, zizmor/CDviz landscape); source of the Phase 5–8 roadmap + repositioning ("fleet remediation engine"); top-10 engineering gaps table.
 
 ## 9. Deployment assets (added session 2)
 - `deploy/docker-compose.full.yml` — one-command local sandbox (PG+Redis+migrate+api+ingestor+worker).

@@ -8,10 +8,10 @@ them to response models.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import case, delete, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from actionsplane.db.models import (
     Campaign,
     CampaignTarget,
     Installation,
+    Lease,
     ProcessedDelivery,
     Repo,
     TemplateBinding,
@@ -29,6 +30,7 @@ from actionsplane.db.models import (
     WorkflowRelation,
     WorkflowRun,
     WorkflowTemplate,
+    WriteAuditLog,
 )
 
 
@@ -86,8 +88,42 @@ async def upsert_installation(session: AsyncSession, values: dict[str, Any]) -> 
     await _upsert(session, Installation, values)
 
 
+# workflow_job lifecycle order. GitHub's job payloads carry no monotonic timestamp (unlike the
+# run's updated_at), so ordering is gated on the status itself: queued < in_progress < completed.
+_JOB_STATUS_RANK: dict[str | None, int] = {
+    "queued": 0,
+    "waiting": 0,
+    "pending": 0,
+    "in_progress": 1,
+    "completed": 2,
+}
+
+
 async def upsert_job(session: AsyncSession, values: dict[str, Any]) -> None:
-    await _upsert(session, WorkflowJob, values)
+    """Upsert a job, but never let a stale event regress a fresher row (Phase 5.4).
+
+    ``workflow_job`` events are delivered at-least-once and out of order, and — unlike runs —
+    the payload has no monotonic ``updated_at`` to gate on. Instead the job *status* is ranked
+    (queued=0 < in_progress=1 < completed=2) and the conditional upsert only applies when the
+    incoming rank is >= the stored rank: a late ``in_progress`` redelivery can't reopen a
+    ``completed`` job, while an equal-rank ``completed`` redelivery still lands (that's how a
+    conclusion update on an already-completed row gets through). The stored rank is computed
+    inline with a CASE so no extra column is needed, and the whole check-and-write stays one
+    atomic SQL statement — mirroring the run guard from migration 0008. Dialect-portable
+    (``ON CONFLICT ... DO UPDATE ... WHERE`` on both PG and sqlite).
+    """
+    stmt = _conflict_insert(session)(WorkflowJob).values(**values)
+    update_cols = {c: stmt.excluded[c] for c in values if c != "id"}
+    incoming_rank = _JOB_STATUS_RANK.get(values.get("status"), 0)
+    stored_rank = case(
+        (WorkflowJob.status == "completed", 2),
+        (WorkflowJob.status == "in_progress", 1),
+        else_=0,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["id"], set_=update_cols, where=stored_rank <= incoming_rank
+    )
+    await session.execute(stmt)
 
 
 async def list_jobs(session: AsyncSession, *, run_id: int) -> list[WorkflowJob]:
@@ -339,3 +375,143 @@ async def try_record_delivery(
     result = await session.execute(stmt)
     await session.commit()
     return result.rowcount == 1
+
+
+async def record_write_audit(
+    session: AsyncSession,
+    *,
+    actor: str,
+    action: str,
+    target: str | None = None,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """Append one row to the write-audit trail (Phase 5.2). Insert-only — no update path exists.
+
+    The caller owns the commit so the audit row lands in the same transaction as the write it
+    describes where possible. ``detail`` must be JSON-serializable.
+    """
+    session.add(
+        WriteAuditLog(
+            occurred_at=datetime.now(UTC), actor=actor, action=action, target=target, detail=detail
+        )
+    )
+    await session.flush()
+
+
+async def list_write_audit(
+    session: AsyncSession, *, limit: int = 100, offset: int = 0
+) -> list[WriteAuditLog]:
+    """The audit trail, newest first, paginated for the API."""
+    stmt = (
+        select(WriteAuditLog)
+        .order_by(WriteAuditLog.occurred_at.desc(), WriteAuditLog.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+async def claim_lease(session: AsyncSession, *, name: str, holder: str, ttl_seconds: int) -> bool:
+    """Atomically claim/refresh a named lease. True iff ``holder`` now owns it (Phase 5.3).
+
+    One conditional upsert: insert the lease, or take it over iff it has expired or is already
+    held by this claimant (re-claiming refreshes the TTL — a cheap heartbeat). The condition
+    lives in the ``ON CONFLICT ... WHERE`` so two workers racing on the same tick see exactly
+    one True — the same atomicity argument as ``try_record_delivery``. Dialect-portable.
+    """
+    now = datetime.now(UTC)
+    expires_at = now + timedelta(seconds=ttl_seconds)
+    stmt = _conflict_insert(session)(Lease).values(name=name, holder=holder, expires_at=expires_at)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["name"],
+        set_={"holder": holder, "expires_at": expires_at},
+        where=or_(Lease.expires_at <= now, Lease.holder == holder),
+    )
+    result = await session.execute(stmt)
+    await session.commit()
+    return result.rowcount == 1
+
+
+async def prune_run_payloads(
+    session: AsyncSession, *, cutoff: datetime, batch_size: int = 500
+) -> int:
+    """Null ``raw_payload`` on workflow_runs created before ``cutoff`` (Phase 5.6).
+
+    The normalized columns stay, so run history remains queryable — only the bulky JSONB goes.
+    Batched (select ids LIMIT n → targeted UPDATE → commit, repeat) so a first run over a large
+    backlog never holds a long lock. Returns the number of rows pruned.
+    """
+    pruned = 0
+    while True:
+        ids = (
+            await session.scalars(
+                select(WorkflowRun.id)
+                .where(WorkflowRun.raw_payload.is_not(None), WorkflowRun.created_at < cutoff)
+                .limit(batch_size)
+            )
+        ).all()
+        if not ids:
+            return pruned
+        # null() forces SQL NULL — a bare None would bind as the JSON 'null' *value*
+        # (none_as_null=False), leaving the row IS NOT NULL and this loop spinning forever.
+        await session.execute(
+            update(WorkflowRun).where(WorkflowRun.id.in_(ids)).values(raw_payload=null())
+        )
+        await session.commit()
+        pruned += len(ids)
+
+
+async def prune_job_payloads(
+    session: AsyncSession, *, cutoff: datetime, batch_size: int = 500
+) -> int:
+    """Null ``raw_payload`` on workflow_jobs that finished (or started) before ``cutoff``.
+
+    Jobs have no created_at; age is judged by ``completed_at``, falling back to ``started_at``.
+    Rows with neither timestamp are left alone — they can't be aged. Batched like the run prune.
+    """
+    age = case(
+        (WorkflowJob.completed_at.is_not(None), WorkflowJob.completed_at),
+        else_=WorkflowJob.started_at,
+    )
+    pruned = 0
+    while True:
+        ids = (
+            await session.scalars(
+                select(WorkflowJob.id)
+                .where(WorkflowJob.raw_payload.is_not(None), age < cutoff)
+                .limit(batch_size)
+            )
+        ).all()
+        if not ids:
+            return pruned
+        await session.execute(
+            update(WorkflowJob).where(WorkflowJob.id.in_(ids)).values(raw_payload=null())
+        )
+        await session.commit()
+        pruned += len(ids)
+
+
+async def prune_deliveries(
+    session: AsyncSession, *, cutoff: datetime, batch_size: int = 500
+) -> int:
+    """Delete processed webhook delivery ids seen before ``cutoff`` (dedup horizon, Phase 5.6).
+
+    GitHub redeliveries arrive within days, not months — old ids only bloat the table. Batched
+    deletes for the same no-long-locks reason as the payload prunes.
+    """
+    pruned = 0
+    while True:
+        ids = (
+            await session.scalars(
+                select(ProcessedDelivery.delivery_id)
+                .where(ProcessedDelivery.seen_at < cutoff)
+                .limit(batch_size)
+            )
+        ).all()
+        if not ids:
+            return pruned
+        await session.execute(
+            delete(ProcessedDelivery).where(ProcessedDelivery.delivery_id.in_(ids))
+        )
+        await session.commit()
+        pruned += len(ids)

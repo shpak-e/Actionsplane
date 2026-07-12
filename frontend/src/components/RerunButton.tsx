@@ -22,7 +22,7 @@ export function RerunButton({ runId, withLabel = false }: { runId: number; withL
   return (
     <button
       className={`${withLabel ? "btn sm" : "icon-btn"}${m.isError ? " fail" : ""}`}
-      style={m.isError ? { color: "var(--fail)", borderColor: "rgba(248,81,73,0.3)" } : undefined}
+      style={m.isError ? { color: "var(--fail)", borderColor: "var(--fail-border)" } : undefined}
       onClick={(e) => {
         e.stopPropagation();
         m.mutate();
