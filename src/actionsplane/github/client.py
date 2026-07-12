@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 
@@ -90,14 +90,17 @@ class GitHubClient:
         if raw is None:
             return
         try:
-            remaining = int(raw)
+            # Clamp negatives to 0 so a garbled value can't read as "budget available". A huge
+            # reset overflows fromtimestamp (OverflowError/OSError) — treat any of these as garbled
+            # and keep the previous snapshot rather than crashing the request.
+            remaining = max(0, int(raw))
             limit = int(headers["x-ratelimit-limit"]) if "x-ratelimit-limit" in headers else None
             reset_at = (
                 datetime.fromtimestamp(int(headers["x-ratelimit-reset"]), tz=UTC)
                 if "x-ratelimit-reset" in headers
                 else None
             )
-        except (ValueError, OSError):  # a proxy mangled the headers — keep the old snapshot
+        except (ValueError, OSError, OverflowError):
             return
         self._rate_budget = RateBudget(remaining=remaining, limit=limit, reset_at=reset_at)
 
@@ -158,6 +161,14 @@ class GitHubClient:
         body, _ = await self._get_cached(url, params=params)
         return body
 
+    def _same_origin(self, url: str) -> bool:
+        """True if ``url`` is https and on the configured API host. The ``rel="next"`` Link comes
+        from the response headers, so a hostile/compromised proxy could point it at an attacker
+        origin — following it would leak the ``Authorization: Bearer <token>`` header there. We
+        refuse to walk off the API host (review 3, N3)."""
+        target = urlparse(url)
+        return target.scheme == "https" and target.netloc == urlparse(self._base).netloc
+
     async def _get_paginated(
         self, url: str, *, params: dict | None = None, max_pages: int = 20
     ) -> AsyncIterator[object]:
@@ -176,6 +187,9 @@ class GitHubClient:
             pages += 1
             match = _NEXT_LINK_RE.search(resp_headers.get("link", ""))
             next_url = match.group(1) if match else None
+            if next_url and not self._same_origin(next_url):
+                log.warning("ignoring cross-origin pagination Link %r (from %s)", next_url, url)
+                next_url = None
             next_params = None  # the next-link URL already carries page/per_page
         if next_url:
             log.warning("pagination hit max_pages=%d for %s (more pages exist)", max_pages, url)

@@ -109,6 +109,28 @@ async def test_list_workflow_runs_respects_max_runs():
 
 
 @pytest.mark.asyncio
+async def test_cross_origin_pagination_link_is_ignored():
+    """A hostile rel=next pointing off the API host is NOT followed, so the Authorization header
+    can't be exfiltrated to an attacker origin (review 3, N3)."""
+    evil = "https://evil.example.com/steal"
+    hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        hosts.append(request.url.host)
+        return httpx.Response(
+            200, json={"workflow_runs": [BARE_RUN]}, headers={"Link": f'<{evil}>; rel="next"'}
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
+        runs = await gh.list_workflow_runs("acme", "infra")
+
+    assert len(runs) == 1  # walk stopped after the first page
+    assert "evil.example.com" not in hosts  # attacker origin never contacted
+
+
+@pytest.mark.asyncio
 async def test_list_workflow_runs_passes_created_filter():
     """The reconcile window (review 3, 4b) rides GitHub's server-side ``created`` filter."""
     captured = {}
