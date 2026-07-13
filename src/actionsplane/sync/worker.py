@@ -39,6 +39,7 @@ from actionsplane.db.repository import (
     upsert_job,
     upsert_repo,
     upsert_run,
+    upsert_runs,
 )
 from actionsplane.drift import autobind_paths, compute_drift
 from actionsplane.events import publish
@@ -237,9 +238,18 @@ async def reconcile(ctx: dict) -> int:
                 repo.owner, repo.name, created=created_floor, max_runs=100
             )
             gate.note(gh)
+            if not runs:
+                return 0
+            # Batch the repo's runs into one statement, and drop raw_payload: reconcile is a
+            # dropped-webhook safety net, so it shouldn't store (or overwrite a webhook's) bulky
+            # payload — the column is deferred and pruned anyway (review §5 H4).
+            rows = []
+            for run in runs:
+                row = events.normalize_run_object(run, repo.id)
+                row.pop("raw_payload", None)
+                rows.append(row)
             async with sessionmaker() as s:
-                for run in runs:
-                    await upsert_run(s, events.normalize_run_object(run, repo.id))
+                await upsert_runs(s, rows)
                 await s.commit()
             return len(runs)
 
@@ -407,4 +417,6 @@ class WorkerSettings:
 
     # arq reads this as a RedisSettings *instance* (not a callable). Resolved at import from the
     # env-driven DSN, which is set before the arq worker loads WorkerSettings.
-    redis_settings: ClassVar[RedisSettings] = RedisSettings.from_dsn(get_settings().redis_url)
+    redis_settings: ClassVar[RedisSettings] = RedisSettings.from_dsn(
+        get_settings().effective_redis_url
+    )

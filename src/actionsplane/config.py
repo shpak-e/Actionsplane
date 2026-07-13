@@ -9,6 +9,7 @@ KMS-backed secret in prod (see the Security Model in ``plan.md``).
 from __future__ import annotations
 
 from functools import lru_cache
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,11 @@ class Settings(BaseSettings):
     # --- persistence ---
     database_url: str = "postgresql+asyncpg://actionsplane:actionsplane@localhost:5432/actionsplane"
     redis_url: str = "redis://localhost:6379/0"
+    # Redis password (from a secret; review §4 H-1). Unauthenticated Redis lets anyone who reaches
+    # the port enqueue arq jobs — which bypasses the webhook HMAC boundary entirely — and forge SSE
+    # envelopes. Provided separately so the URL can stay in a ConfigMap while the credential lives
+    # in a Secret; it is injected into the effective URL when the URL itself carries no password.
+    redis_password: str | None = Field(default=None, repr=False)
 
     # --- GitHub App ---
     github_app_id: int | None = None
@@ -101,6 +107,25 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         """Parsed, de-whitespaced CORS origins (empty → CORS middleware not installed)."""
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
+    @property
+    def effective_redis_url(self) -> str:
+        """``redis_url`` with ``redis_password`` injected as the auth part when the URL has none.
+
+        Lets the URL live in a ConfigMap and the credential in a Secret (review §4 H-1). If the URL
+        already carries a password, or no password is configured, it is returned unchanged — so an
+        all-in-one ``redis://:pw@host`` URL still works. This is the URL every Redis consumer uses.
+        """
+        pw = self.redis_password
+        if not pw:
+            return self.redis_url
+        parts = urlsplit(self.redis_url)
+        if parts.password is not None:
+            return self.redis_url  # caller already embedded credentials; don't second-guess
+        host = f"[{parts.hostname}]" if parts.hostname and ":" in parts.hostname else parts.hostname
+        userinfo = f"{parts.username or ''}:{quote(pw, safe='')}"
+        netloc = f"{userinfo}@{host}" + (f":{parts.port}" if parts.port else "")
+        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
     @property
     def offline_mode(self) -> bool:

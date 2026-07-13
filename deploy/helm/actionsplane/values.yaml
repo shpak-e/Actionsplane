@@ -56,6 +56,11 @@ postgres:
 redis:
   enabled: true
   image: redis:7-alpine
+  # Require a password (review §4 H-1). The bundled Redis runs with --requirepass and the app
+  # injects the same secret into its Redis URL. Keep true unless you front Redis with your own
+  # authenticated/managed instance. The password lives in `secrets.existingSecret` under key
+  # ACTIONSPLANE_REDIS_PASSWORD.
+  auth: true
 
 # Run the Alembic migration as a pre-install/pre-upgrade hook.
 migrate:
@@ -69,9 +74,10 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
 
-# Default-deny + least-privilege NetworkPolicies (review 3/4, N2). Off by default: they only take
-# effect on a policy-enforcing CNI (Calico, Cilium, …), and enabling them on a cluster whose CNI
-# ignores NetworkPolicy is a silent no-op while enabling on one that enforces could surprise an
-# operator. Turn on once you've confirmed your CNI enforces policy. See templates/networkpolicy.yaml.
+# Default-deny + least-privilege NetworkPolicies (review §4 H-1 / N2). ON by default: this service
+# holds a GitHub App key and its HMAC boundary depends on network isolation, so the secure posture
+# ships as the default. On a CNI that doesn't enforce NetworkPolicy these are silent no-ops (still
+# safe); set false only if your platform manages egress/isolation another way. See
+# templates/networkpolicy.yaml.
 networkPolicy:
-  enabled: false
+  enabled: true

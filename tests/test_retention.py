@@ -100,7 +100,7 @@ async def test_prune_run_payloads_batched(db):
 
         rows = {r.id: r for r in (await session.scalars(select(WorkflowRun))).all()}
         for row in rows.values():
-            await session.refresh(row)
+            await session.refresh(row, ["raw_payload"])  # raw_payload is deferred (H1) — load it
         assert rows[1].raw_payload is None
         assert rows[3].raw_payload is None
         assert rows[2].raw_payload is not None  # recent row untouched
@@ -120,7 +120,7 @@ async def test_prune_job_payloads_uses_completed_then_started(db):
 
         rows = {j.id: j for j in (await session.scalars(select(WorkflowJob))).all()}
         for row in rows.values():
-            await session.refresh(row)
+            await session.refresh(row, ["raw_payload"])  # deferred (H1) — load it
         assert rows[11].raw_payload is None  # old completed_at
         assert rows[13].raw_payload is None  # no completed_at, old started_at
         assert rows[12].raw_payload is not None  # recent
@@ -153,8 +153,11 @@ async def test_prune_retention_cron_end_to_end(worker_env):
     assert pruned == 5  # 2 runs + 2 jobs + 1 delivery
 
     async with worker_env() as session:
-        assert (await session.get(WorkflowRun, 1)).raw_payload is None
-        assert (await session.get(WorkflowRun, 2)).raw_payload is not None
+        # raw_payload is deferred (H1) — read the column directly rather than lazy-loading it.
+        payload1 = select(WorkflowRun.raw_payload).where(WorkflowRun.id == 1)
+        payload2 = select(WorkflowRun.raw_payload).where(WorkflowRun.id == 2)
+        assert await session.scalar(payload1) is None
+        assert await session.scalar(payload2) is not None
 
 
 async def test_prune_retention_skips_when_lease_held_elsewhere(worker_env):
@@ -166,4 +169,7 @@ async def test_prune_retention_skips_when_lease_held_elsewhere(worker_env):
     assert await prune_retention({}) == 0  # lease denied → skipped, nothing pruned
 
     async with worker_env() as session:
-        assert (await session.get(WorkflowRun, 1)).raw_payload is not None
+        assert (
+            await session.scalar(select(WorkflowRun.raw_payload).where(WorkflowRun.id == 1))
+            is not None
+        )

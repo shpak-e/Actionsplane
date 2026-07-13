@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+
 import httpx
 import pytest
 
@@ -189,7 +191,6 @@ async def test_etag_conditional_request_reuses_cached_body():
 
 @pytest.mark.asyncio
 async def test_list_and_get_workflow_files():
-    import base64
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -231,6 +232,41 @@ async def test_get_file_text_rejects_traversal():
         gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
         with pytest.raises(ValueError):
             await gh.get_file_text("acme", "infra", "../../etc/passwd")
+
+
+@pytest.mark.asyncio
+async def test_get_file_text_revalidates_with_etag():
+    """H3: the second read sends If-None-Match; GitHub answers 304 → cached body, no re-download."""
+    calls = {"n": 0, "conditional": 0}
+    content = base64.b64encode(b"name: ci\n").decode()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if request.headers.get("if-none-match") == '"etag-1"':
+            calls["conditional"] += 1
+            return httpx.Response(304, headers={"etag": '"etag-1"'})
+        return httpx.Response(
+            200, json={"content": content, "encoding": "base64"}, headers={"etag": '"etag-1"'}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
+        first = await gh.get_file_text("acme", "infra", ".github/workflows/ci.yml")
+        second = await gh.get_file_text("acme", "infra", ".github/workflows/ci.yml")
+    assert first == second == "name: ci\n"
+    assert calls["n"] == 2 and calls["conditional"] == 1  # 2nd call was a conditional 304
+
+
+@pytest.mark.asyncio
+async def test_get_file_text_rejects_oversized_file():
+    def handler(request: httpx.Request) -> httpx.Response:
+        # Report a size over the cap; content need not actually be that big to be rejected.
+        return httpx.Response(200, json={"content": "", "encoding": "base64", "size": 5_000_000})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
+        with pytest.raises(ValueError, match="cap"):
+            await gh.get_file_text("acme", "infra", ".github/workflows/huge.yml")
 
 
 @pytest.mark.asyncio

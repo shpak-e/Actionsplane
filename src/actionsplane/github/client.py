@@ -29,6 +29,9 @@ log = logging.getLogger(__name__)
 
 _ACCEPT = "application/vnd.github+json"
 _API_VERSION = "2022-11-28"
+# Ceiling on a fetched workflow file's decoded size (review §4). A real workflow is a few KB; a
+# multi-MB "file" is hostile or wrong, and parsing it wastes memory downstream. 2 MiB is generous.
+_MAX_FILE_BYTES = 2 * 1024 * 1024
 
 # RFC 5988 Link header: <https://api.github.com/...?page=2>; rel="next", <...>; rel="last"
 _NEXT_LINK_RE = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
@@ -318,17 +321,26 @@ class GitHubClient:
         return out
 
     async def get_file_text(self, owner: str, repo: str, path: str) -> str:
-        """Decoded text content of a file via the contents API (base64 payload)."""
+        """Decoded text content of a file via the contents API (base64 payload).
+
+        Routed through the ETag cache (review §5 H3): audit + drift sweeps re-read the same workflow
+        bodies every tick, so on the second+ sweep this revalidates with a conditional request that
+        GitHub answers 304 (no body transfer, and 304s don't count against the rate-limit budget)
+        instead of re-downloading every file. The unchanged content comes back from the cache.
+        """
         if ".." in path.split("/"):
             raise ValueError(f"refusing path traversal in {path!r}")
         safe_path = quote(path)  # keep "/" but encode the rest, preventing URL injection
-        resp = await self._client.get(
-            f"{self._base}/repos/{owner}/{repo}/contents/{safe_path}",
-            headers=self._headers,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return base64.b64decode(data["content"]).decode("utf-8")
+        body = await self._get_json(f"{self._base}/repos/{owner}/{repo}/contents/{safe_path}")
+        if not isinstance(body, dict) or "content" not in body:
+            raise ValueError(f"unexpected contents payload for {path!r}")
+        # The API reports the byte size; reject an oversized file before decoding it into memory.
+        if isinstance(body.get("size"), int) and body["size"] > _MAX_FILE_BYTES:
+            raise ValueError(f"file {path!r} is {body['size']} bytes (> {_MAX_FILE_BYTES} cap)")
+        decoded = base64.b64decode(body["content"])
+        if len(decoded) > _MAX_FILE_BYTES:  # defensive: trust the bytes, not just the reported size
+            raise ValueError(f"file {path!r} decoded to {len(decoded)} bytes (> cap)")
+        return decoded.decode("utf-8")
 
     async def get_file(self, owner: str, repo: str, path: str, *, ref: str | None = None) -> dict:
         """Fetch a file's decoded text + blob sha (the sha is needed to update it via PUT)."""

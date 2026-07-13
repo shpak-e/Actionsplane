@@ -25,7 +25,7 @@ async def _publisher_conn() -> aioredis.Redis:
     """Process-wide Redis connection for publishing (opened once, reused)."""
     global _publisher
     if _publisher is None:
-        _publisher = aioredis.from_url(get_settings().redis_url)
+        _publisher = aioredis.from_url(get_settings().effective_redis_url)
     return _publisher
 
 
@@ -58,7 +58,7 @@ async def subscribe(*, conn: aioredis.Redis | None = None) -> AsyncIterator[str]
     so the cleanup path is unit-testable without a live Redis.
     """
     owns_conn = conn is None
-    conn = conn if conn is not None else aioredis.from_url(get_settings().redis_url)
+    conn = conn if conn is not None else aioredis.from_url(get_settings().effective_redis_url)
     pubsub = conn.pubsub()
     await pubsub.subscribe(CHANNEL)
     try:

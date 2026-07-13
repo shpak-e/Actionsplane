@@ -33,6 +33,18 @@ spec:
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
+          {{- if .Values.redis.auth }}
+          # Require auth (review §4 H-1). Password from the existing app secret; REDISCLI_AUTH lets
+          # the probe authenticate without exposing it on the command line.
+          command: ["redis-server", "--requirepass", "$(REDIS_PASSWORD)"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.secrets.existingSecret }}, key: ACTIONSPLANE_REDIS_PASSWORD }
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.secrets.existingSecret }}, key: ACTIONSPLANE_REDIS_PASSWORD }
+          {{- end }}
           ports: [{ containerPort: 6379 }]
           readinessProbe:
             exec: { command: ["redis-cli", "ping"] }

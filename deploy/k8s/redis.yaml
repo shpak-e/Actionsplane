@@ -31,6 +31,17 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
+          # Require auth (review §4 H-1): unauthenticated Redis lets anyone on the port enqueue arq
+          # jobs (bypassing the webhook HMAC boundary) and forge SSE envelopes. Password from the
+          # app secret; REDISCLI_AUTH lets the probe authenticate without putting it on the cmdline.
+          command: ["redis-server", "--requirepass", "$(REDIS_PASSWORD)"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: actionsplane-secrets, key: ACTIONSPLANE_REDIS_PASSWORD }
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef: { name: actionsplane-secrets, key: ACTIONSPLANE_REDIS_PASSWORD }
           ports:
             - containerPort: 6379
           readinessProbe:

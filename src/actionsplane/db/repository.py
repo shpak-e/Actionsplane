@@ -16,6 +16,7 @@ from sqlalchemy import and_, case, delete, func, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from actionsplane.db.models import (
     AuditFinding,
@@ -72,37 +73,62 @@ async def upsert_repo(
     await _upsert(session, Repo, {**values, "installation_id": installation_id})
 
 
+def _run_upsert_where(stmt):
+    """The strict ordering guard shared by the single- and batch-run upserts (review 3, 4a).
+
+    Apply the update only when the incoming event is strictly newer, or exactly as new **and**
+    actually changes ``status``/``conclusion`` (an equal-timestamp conclusion correction — the same
+    nuance as the job gate). An identical redelivery matches nothing and writes 0 rows, so an idle
+    repo churns no rows and dirties no indexes. Legacy rows (``updated_at IS NULL``) still update.
+    """
+    return or_(
+        WorkflowRun.updated_at.is_(None),
+        WorkflowRun.updated_at < stmt.excluded["updated_at"],  # strictly newer → apply
+        and_(  # same timestamp, but a real status/conclusion change (correction) → apply
+            WorkflowRun.updated_at == stmt.excluded["updated_at"],
+            or_(
+                WorkflowRun.status.is_distinct_from(stmt.excluded["status"]),
+                WorkflowRun.conclusion.is_distinct_from(stmt.excluded["conclusion"]),
+            ),
+        ),
+    )
+
+
 async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> int:
     """Upsert a run, never letting a stale event overwrite a fresher row. Returns rows written.
 
     GitHub delivers ``workflow_run`` events at-least-once and out of order, so a late
     ``in_progress`` redelivery can arrive *after* the ``completed`` event for the same run id.
     An unconditional upsert would regress the row from completed back to in-progress. The run's
-    ``updated_at`` (monotonic across GitHub state transitions) gates the update.
-
-    The guard is *strict* (review 3, 4a): it applies only when the incoming event is strictly
-    newer, or exactly as new **and** actually changes ``status``/``conclusion`` (an equal-timestamp
-    conclusion correction — the same nuance as the job gate). An identical redelivery — the common
-    case for a reconcile sweep replaying already-seen runs — matches nothing and writes 0 rows, so
-    an idle repo churns no rows and dirties no indexes. Legacy rows (``updated_at IS NULL``) still
-    take the update. Staying in SQL keeps the check-and-write atomic under concurrency.
+    ``updated_at`` (monotonic across GitHub state transitions) gates the update — see
+    ``_run_upsert_where``. Staying in SQL keeps the check-and-write atomic under concurrency.
     """
     stmt = _conflict_insert(session)(WorkflowRun).values(**values)
     update_cols = {c: stmt.excluded[c] for c in values if c != "id"}
     stmt = stmt.on_conflict_do_update(
-        index_elements=["id"],
-        set_=update_cols,
-        where=or_(
-            WorkflowRun.updated_at.is_(None),
-            WorkflowRun.updated_at < stmt.excluded["updated_at"],  # strictly newer → apply
-            and_(  # same timestamp, but a real status/conclusion change (correction) → apply
-                WorkflowRun.updated_at == stmt.excluded["updated_at"],
-                or_(
-                    WorkflowRun.status.is_distinct_from(stmt.excluded["status"]),
-                    WorkflowRun.conclusion.is_distinct_from(stmt.excluded["conclusion"]),
-                ),
-            ),
-        ),
+        index_elements=["id"], set_=update_cols, where=_run_upsert_where(stmt)
+    )
+    result = await session.execute(stmt)
+    return result.rowcount
+
+
+async def upsert_runs(session: AsyncSession, rows: list[dict[str, Any]]) -> int:
+    """Batch-upsert many runs in ONE statement, same strict guard as ``upsert_run`` (review §5 H4).
+
+    Reconcile replays every recent run for every repo each tick; a per-run statement is up to ~50k
+    no-op statements (the guard writes 0 rows for unchanged runs, but the round trips still cost).
+    A single multi-VALUES ``INSERT ... ON CONFLICT DO UPDATE ... WHERE`` collapses a repo's runs to
+    one statement. Rows are de-duplicated by id first — Postgres refuses to let one ``ON CONFLICT``
+    statement touch the same row twice. All rows must share the same columns (the caller ensures it,
+    e.g. by dropping ``raw_payload`` uniformly). Returns rows actually written.
+    """
+    if not rows:
+        return 0
+    deduped = list({r["id"]: r for r in rows}.values())  # last snapshot of a repeated id wins
+    stmt = _conflict_insert(session)(WorkflowRun).values(deduped)
+    update_cols = {c: stmt.excluded[c] for c in deduped[0] if c != "id"}
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["id"], set_=update_cols, where=_run_upsert_where(stmt)
     )
     result = await session.execute(stmt)
     return result.rowcount
@@ -151,7 +177,12 @@ async def upsert_job(session: AsyncSession, values: dict[str, Any]) -> None:
 
 
 async def list_jobs(session: AsyncSession, *, run_id: int) -> list[WorkflowJob]:
-    stmt = select(WorkflowJob).where(WorkflowJob.run_id == run_id)
+    # undefer raw_payload: the API serializes the step list out of it (deferred by default, H1).
+    stmt = (
+        select(WorkflowJob)
+        .where(WorkflowJob.run_id == run_id)
+        .options(undefer(WorkflowJob.raw_payload))
+    )
     return list((await session.scalars(stmt)).all())
 
 
@@ -228,6 +259,8 @@ async def list_failing_jobs(session: AsyncSession, run_ids: list[int]) -> list[W
             select(WorkflowJob)
             .where(WorkflowJob.run_id.in_(chunk), WorkflowJob.conclusion == "failure")
             .order_by(WorkflowJob.run_id, WorkflowJob.id)
+            # undefer raw_payload: _failing_steps_for reads the step list out of it (H1).
+            .options(undefer(WorkflowJob.raw_payload))
         )
         out.extend((await session.scalars(stmt)).all())
     return out
