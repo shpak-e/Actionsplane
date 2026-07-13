@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 
@@ -346,10 +347,35 @@ async def _failing_steps_for(
     return out
 
 
+# Single-flight TTL cache for the fleet pipeline graph (review §5 M5). One rebuild per TTL window,
+# shared across concurrent viewers; the lock collapses a thundering herd on expiry to one rebuild.
+_pipelines_cache: dict[str, object] = {"at": 0.0, "value": None}
+_pipelines_lock = asyncio.Lock()
+
+
 @router.get("/pipelines", response_model=PipelineGraphOut)
 async def get_pipelines(session: AsyncSession = Depends(get_session)) -> PipelineGraphOut:
-    """The fleet-wide cross-workflow trigger/dependency graph, each node annotated with the
-    status of its latest run (and, when failed, the job/step that failed)."""
+    """The fleet-wide cross-workflow trigger/dependency graph, each node annotated with its
+    latest-run status (and, when failed, the job/step that failed). Cached for a short TTL."""
+    ttl = get_settings().pipelines_cache_ttl_seconds
+    now = time.monotonic()
+    cached = _pipelines_cache["value"]
+    if ttl > 0 and cached is not None and now - float(_pipelines_cache["at"]) < ttl:
+        return cached  # type: ignore[return-value]
+    async with _pipelines_lock:
+        # Re-check inside the lock: a concurrent request may have just rebuilt it.
+        now = time.monotonic()
+        cached = _pipelines_cache["value"]
+        if ttl > 0 and cached is not None and now - float(_pipelines_cache["at"]) < ttl:
+            return cached  # type: ignore[return-value]
+        graph = await _build_pipelines(session)
+        if ttl > 0:
+            _pipelines_cache["value"] = graph
+            _pipelines_cache["at"] = time.monotonic()
+        return graph
+
+
+async def _build_pipelines(session: AsyncSession) -> PipelineGraphOut:
     relations = await list_workflow_relations(session)
     repos = {r.id: r for r in await list_repos(session, watched_only=False)}
 

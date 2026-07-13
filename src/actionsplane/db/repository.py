@@ -12,7 +12,20 @@ from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
-from sqlalchemy import and_, case, delete, func, null, or_, select, update
+from sqlalchemy import (
+    Integer,
+    and_,
+    case,
+    column,
+    delete,
+    func,
+    null,
+    or_,
+    select,
+    true,
+    update,
+    values,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -203,41 +216,63 @@ class LatestRun(NamedTuple):
     run_number: int
 
 
+_LATEST_RUN_COLS = (
+    WorkflowRun.id,
+    WorkflowRun.workflow_id,
+    WorkflowRun.status,
+    WorkflowRun.conclusion,
+    WorkflowRun.run_number,
+)
+
+
+def _latest_runs_stmt(dialect: str, chunk: list[int]):
+    """Build the newest-run-per-workflow query for one id chunk, dialect-appropriately (§5 H2).
+
+    Postgres: a ``JOIN LATERAL (… ORDER BY created_at DESC LIMIT 1)`` fetches exactly ONE row per
+    workflow via the ``(workflow_id, created_at DESC)`` index — O(workflows), not O(history), so it
+    doesn't degrade as run history grows. sqlite (tests) has no LATERAL, so it falls back to the
+    portable ``ROW_NUMBER()`` window; correctness is identical, only the row-read cost differs, and
+    the hermetic suite exercises the same result shape.
+    """
+    if dialect == "postgresql":
+        w = values(column("workflow_id", Integer), name="w").data([(i,) for i in chunk])
+        newest = (
+            select(*_LATEST_RUN_COLS)
+            .where(WorkflowRun.workflow_id == w.c.workflow_id)
+            .order_by(WorkflowRun.created_at.desc(), WorkflowRun.id.desc())  # id breaks ties
+            .limit(1)
+            .lateral("lr")
+        )
+        return select(
+            newest.c.id,
+            newest.c.workflow_id,
+            newest.c.status,
+            newest.c.conclusion,
+            newest.c.run_number,
+        ).select_from(w.join(newest, true()))
+    rn = func.row_number().over(
+        partition_by=WorkflowRun.workflow_id,
+        order_by=(WorkflowRun.created_at.desc(), WorkflowRun.id.desc()),
+    )
+    ranked = select(*_LATEST_RUN_COLS, rn.label("rn")).where(WorkflowRun.workflow_id.in_(chunk))
+    ranked = ranked.subquery()
+    return select(
+        ranked.c.id, ranked.c.workflow_id, ranked.c.status, ranked.c.conclusion, ranked.c.run_number
+    ).where(ranked.c.rn == 1)
+
+
 async def latest_runs_for(session: AsyncSession, workflow_ids: list[int]) -> dict[int, LatestRun]:
     """The most recent run per workflow id (by ``created_at``), for the given workflow ids.
 
-    One indexed query per id chunk regardless of history size: a ``ROW_NUMBER() OVER (PARTITION BY
-    workflow_id ORDER BY created_at DESC)`` window keeps just the newest row per workflow, instead
-    of streaming every run for those workflows into Python. Only the status columns are selected —
-    never ``raw_payload``. The window form is dialect-portable (PG + sqlite ≥ 3.25). The id list is
-    chunked under the bind-param ceiling (NEW-4), so a small fleet is still a single query. Returns
-    ``{workflow_id: LatestRun}``.
+    O(workflows) on Postgres via a lateral top-1 join; a portable window fallback on sqlite (see
+    ``_latest_runs_stmt``). Only the status columns are selected — never ``raw_payload``. The id
+    list is chunked under the bind-param ceiling (NEW-4), so a small fleet is still one query.
+    Returns ``{workflow_id: LatestRun}``.
     """
     out: dict[int, LatestRun] = {}
+    dialect = session.bind.dialect.name
     for chunk in _in_chunks(workflow_ids):
-        rn = func.row_number().over(
-            partition_by=WorkflowRun.workflow_id,
-            order_by=(WorkflowRun.created_at.desc(), WorkflowRun.id.desc()),  # id breaks ties
-        )
-        ranked = (
-            select(
-                WorkflowRun.id,
-                WorkflowRun.workflow_id,
-                WorkflowRun.status,
-                WorkflowRun.conclusion,
-                WorkflowRun.run_number,
-                rn.label("rn"),
-            )
-            .where(WorkflowRun.workflow_id.in_(chunk))
-            .subquery()
-        )
-        stmt = select(
-            ranked.c.id,
-            ranked.c.workflow_id,
-            ranked.c.status,
-            ranked.c.conclusion,
-            ranked.c.run_number,
-        ).where(ranked.c.rn == 1)
+        stmt = _latest_runs_stmt(dialect, chunk)
         for row in (await session.execute(stmt)).all():
             out[row.workflow_id] = LatestRun(
                 row.id, row.workflow_id, row.status, row.conclusion, row.run_number

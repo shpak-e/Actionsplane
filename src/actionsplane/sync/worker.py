@@ -342,17 +342,22 @@ async def drift_sweep(ctx: dict) -> int:
         paths = await gh.list_workflow_files(repo.owner, repo.name)
         gate.note(gh)
         bound = autobind_paths(list(canon), paths)
-        n = 0
+        # Fetch + diff every candidate first (network), THEN write — so the DB connection isn't
+        # held across GitHub I/O (review §5 M2), mirroring reconcile_one / the audit sweep.
+        scored: list[tuple[str, int, str]] = []  # (path, template_id, severity)
+        for path, tpl_name in bound.items():
+            tpl_id, tpl_yaml = canon[tpl_name]
+            candidate = await gh.get_file_text(repo.owner, repo.name, path)
+            report = compute_drift(tpl_yaml, candidate, path=path)
+            scored.append((path, tpl_id, report.severity.value))
+        if not scored:
+            return 0
         async with sessionmaker() as s:
-            for path, tpl_name in bound.items():
-                tpl_id, tpl_yaml = canon[tpl_name]
-                candidate = await gh.get_file_text(repo.owner, repo.name, path)
-                report = compute_drift(tpl_yaml, candidate, path=path)
+            for path, tpl_id, severity in scored:
                 binding = await create_binding(s, repo_id=repo.id, template_id=tpl_id, path=path)
-                await update_binding_drift(s, binding, severity=report.severity.value)
-                n += 1
+                await update_binding_drift(s, binding, severity=severity)
             await s.commit()
-        return n
+        return len(scored)
 
     async with httpx.AsyncClient(timeout=30) as http:
         cache: TokenCache = {}

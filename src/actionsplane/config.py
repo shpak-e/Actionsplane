@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     security_events_enabled: bool = False
 
     # --- HTTP / API surface ---
+    # /pipelines rebuilds the whole fleet graph per request; a short in-process TTL cache absorbs
+    # repeated views (tab switches, multiple dashboards) without staleness mattering (review §5 M5).
+    # 0 disables the cache.
+    pipelines_cache_ttl_seconds: float = 20.0
     # Comma-separated allowed CORS origins for the browser UI (e.g.
     # "https://actionsplane.example.com"). Empty (default) sends no CORS headers, so the API is
     # same-origin only — the safe default given the API can run open (no token). Never set this to
@@ -83,11 +87,15 @@ class Settings(BaseSettings):
 
     # --- database engine pool (async SQLAlchemy / asyncpg) ---
     # Bounded pool + pre-ping so a 500-repo fleet's API/worker don't exhaust Postgres connections
-    # or hand out dead ones after an idle gap. The statement/idle timeouts are server-side ceilings
-    # (Postgres only; ignored on sqlite) so a pathological query or a leaked transaction can't pin a
-    # connection forever. All env-tunable; 0 disables a timeout.
-    db_pool_size: int = 15
-    db_max_overflow: int = 10
+    # or hand out dead ones after an idle gap. Peak capacity (pool_size + max_overflow = 30) clears
+    # the worker's worst case — fetch_concurrency (8) sweeps + max_jobs (10) event handlers, review
+    # §5 M2 — while a modest base keeps idle connections low against Postgres's ~100 default (the
+    # sweeps now also release the connection during GitHub I/O, so steady-state demand is lower).
+    # The statement/idle timeouts are server-side ceilings (Postgres only; ignored on sqlite) so a
+    # pathological query or a leaked transaction can't pin a connection forever. Env-tunable; 0
+    # disables a timeout.
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
     db_statement_timeout_ms: int = 30_000
     db_idle_in_txn_timeout_ms: int = 60_000
 
