@@ -46,7 +46,9 @@ async def run_dry_run(session, campaign: Campaign) -> Campaign:
                 gh = await client_for_installation(
                     repo.installation_id, http=http, jwt=jwt, token_cache=cache
                 )
-                edits, resolved = await dry_run_repo(gh, repo.owner, repo.name)
+                edits, resolved = await dry_run_repo(
+                    gh, repo.owner, repo.name, operation=campaign.operation
+                )
                 resolved_all.update(resolved)
                 target.diff_preview = "\n".join(e.diff for e in edits) or None
                 target.status = "dry-run-ok"
@@ -85,7 +87,9 @@ async def apply_campaign(session, campaign: Campaign) -> Campaign:
                     repo.installation_id, http=http, jwt=jwt, token_cache=cache
                 )
                 # reuse the previewed SHA map — no fresh HEAD resolution
-                edits, _ = await dry_run_repo(gh, repo.owner, repo.name, resolved=resolved)
+                edits, _ = await dry_run_repo(
+                    gh, repo.owner, repo.name, operation=campaign.operation, resolved=resolved
+                )
                 if not edits:
                     continue
                 pr = await open_pr_for_edits(

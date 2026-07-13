@@ -70,8 +70,10 @@ from actionsplane.db.repository import (
     upsert_template,
 )
 from actionsplane.events import subscribe
+from actionsplane.events.bus import SubscriberLimit
 from actionsplane.executor.actions import rerun_run
 from actionsplane.executor.campaigns import apply_campaign, run_dry_run
+from actionsplane.executor.operations import OPERATIONS
 from actionsplane.metrics import summarize_runs
 from actionsplane.observability import instrument_fastapi, setup_tracing
 from actionsplane.offline import last_sync, sync_offline
@@ -503,6 +505,8 @@ async def create_campaign_endpoint(
     actor: str = Depends(require_configured_operate),
 ) -> CampaignOut:
     """Create a bulk-edit campaign and immediately compute its dry-run diffs (no writes)."""
+    if body.operation not in OPERATIONS:
+        raise HTTPException(422, f"unknown operation {body.operation!r}")
     campaign = await create_campaign(
         session,
         name=body.name,
@@ -591,6 +595,9 @@ async def events_stream(request: Request) -> EventSourceResponse:
                 if await request.is_disconnected():
                     break
                 yield {"event": "update", "data": envelope}
+        except SubscriberLimit:
+            # Cap reached (the generator raises on first pull) — refuse this stream cleanly.
+            log.warning("SSE subscriber cap reached; refusing new stream")
         finally:
             await stream.aclose()
 

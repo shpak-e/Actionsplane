@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     # repeated views (tab switches, multiple dashboards) without staleness mattering (review §5 M5).
     # 0 disables the cache.
     pipelines_cache_ttl_seconds: float = 20.0
+    # Cap on concurrent SSE subscribers per API process (review §4 L-5 / §5 M6). All subscribers now
+    # share ONE Redis pubsub reader (fan-out), so this bounds per-client queues/tasks, not Redis
+    # connections. A 201st client is refused rather than letting a flood exhaust process memory.
+    sse_max_subscribers: int = 200
     # Comma-separated allowed CORS origins for the browser UI (e.g.
     # "https://actionsplane.example.com"). Empty (default) sends no CORS headers, so the API is
     # same-origin only — the safe default given the API can run open (no token). Never set this to
