@@ -68,3 +68,10 @@ ingress:
   annotations:
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+
+# Default-deny + least-privilege NetworkPolicies (review 3/4, N2). Off by default: they only take
+# effect on a policy-enforcing CNI (Calico, Cilium, …), and enabling them on a cluster whose CNI
+# ignores NetworkPolicy is a silent no-op while enabling on one that enforces could surprise an
+# operator. Turn on once you've confirmed your CNI enforces policy. See templates/networkpolicy.yaml.
+networkPolicy:
+  enabled: false

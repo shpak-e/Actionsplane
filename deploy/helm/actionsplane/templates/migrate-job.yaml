@@ -12,7 +12,9 @@ spec:
   backoffLimit: 3
   template:
     metadata:
-      labels: {{- include "actionsplane.labels" . | nindent 8 }}
+      labels:
+        {{- include "actionsplane.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate  # so a NetworkPolicy can grant it Postgres egress
     spec:
       restartPolicy: Never
       securityContext: { runAsNonRoot: true, runAsUser: 10001 }

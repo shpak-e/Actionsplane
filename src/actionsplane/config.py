@@ -68,6 +68,23 @@ class Settings(BaseSettings):
     # unless the operator wants the Security-tab integration.
     security_events_enabled: bool = False
 
+    # --- HTTP / API surface ---
+    # Comma-separated allowed CORS origins for the browser UI (e.g.
+    # "https://actionsplane.example.com"). Empty (default) sends no CORS headers, so the API is
+    # same-origin only — the safe default given the API can run open (no token). Never set this to
+    # "*" on a token-open deployment: it would let any site read the fleet's data cross-origin.
+    cors_allow_origins: str = ""
+
+    # --- database engine pool (async SQLAlchemy / asyncpg) ---
+    # Bounded pool + pre-ping so a 500-repo fleet's API/worker don't exhaust Postgres connections
+    # or hand out dead ones after an idle gap. The statement/idle timeouts are server-side ceilings
+    # (Postgres only; ignored on sqlite) so a pathological query or a leaked transaction can't pin a
+    # connection forever. All env-tunable; 0 disables a timeout.
+    db_pool_size: int = 15
+    db_max_overflow: int = 10
+    db_statement_timeout_ms: int = 30_000
+    db_idle_in_txn_timeout_ms: int = 60_000
+
     # --- observability (OpenTelemetry tracing) ---
     # Off by default → all tracing hooks degrade to no-ops. When true, spans are exported via OTLP
     # and trace context is propagated across the arq queue (ingest → worker → audit → SARIF = one
@@ -79,6 +96,11 @@ class Settings(BaseSettings):
     def offline_repo_list(self) -> list[str]:
         """Parsed, de-whitespaced offline repo specs."""
         return [r.strip() for r in self.offline_repos.split(",") if r.strip()]
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Parsed, de-whitespaced CORS origins (empty → CORS middleware not installed)."""
+        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
     @property
     def offline_mode(self) -> bool:

@@ -26,8 +26,31 @@ class Base(DeclarativeBase):
 
 @lru_cache
 def get_engine() -> AsyncEngine:
-    """Return the process-wide async engine, created on first use."""
-    return create_async_engine(get_settings().database_url, future=True)
+    """Return the process-wide async engine, created on first use.
+
+    Bounded pool + ``pool_pre_ping`` so a busy API/worker can't exhaust Postgres connections or
+    hand out one the server already dropped after an idle gap. On Postgres we also set server-side
+    ``statement_timeout`` / ``idle_in_transaction_session_timeout`` ceilings so a pathological query
+    or a leaked transaction can't pin a connection indefinitely. sqlite (tests) takes none of this —
+    it has no such pool or GUCs — so the extra kwargs are applied only for a real DB URL.
+    """
+    settings = get_settings()
+    url = settings.database_url
+    kwargs: dict = {"future": True}
+    if not url.startswith("sqlite"):
+        kwargs.update(
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_pre_ping=True,
+        )
+        # asyncpg applies these libpq GUCs per connection; 0 means "no timeout" to Postgres.
+        server_settings = {
+            "statement_timeout": str(max(0, settings.db_statement_timeout_ms)),
+            "idle_in_transaction_session_timeout": str(max(0, settings.db_idle_in_txn_timeout_ms)),
+        }
+        if url.startswith("postgresql"):
+            kwargs["connect_args"] = {"server_settings": server_settings}
+    return create_async_engine(url, **kwargs)
 
 
 @lru_cache

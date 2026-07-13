@@ -8,6 +8,7 @@ them to response models.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
@@ -32,6 +33,17 @@ from actionsplane.db.models import (
     WorkflowTemplate,
     WriteAuditLog,
 )
+
+# Postgres caps a statement at 65,535 bind parameters; an ``IN (...)`` over a whole fleet's worth
+# of ids can approach that. Chunk id lists well under the ceiling and union the results in Python
+# (review 4, NEW-4). 900 leaves ample headroom for the query's other params on either dialect.
+_IN_CHUNK = 900
+
+
+def _in_chunks(ids: Sequence[int], size: int = _IN_CHUNK) -> Iterator[list[int]]:
+    """Yield ``ids`` in chunks small enough to stay under the DB's bind-parameter ceiling."""
+    for i in range(0, len(ids), size):
+        yield list(ids[i : i + size])
 
 
 def _conflict_insert(session: AsyncSession):
@@ -163,40 +175,43 @@ class LatestRun(NamedTuple):
 async def latest_runs_for(session: AsyncSession, workflow_ids: list[int]) -> dict[int, LatestRun]:
     """The most recent run per workflow id (by ``created_at``), for the given workflow ids.
 
-    One indexed query regardless of history size: a ``ROW_NUMBER() OVER (PARTITION BY workflow_id
-    ORDER BY created_at DESC)`` window keeps just the newest row per workflow, instead of streaming
-    every run for those workflows into Python. Only the status columns are selected — never
-    ``raw_payload``. The window form is dialect-portable (PG + sqlite ≥ 3.25). Returns
+    One indexed query per id chunk regardless of history size: a ``ROW_NUMBER() OVER (PARTITION BY
+    workflow_id ORDER BY created_at DESC)`` window keeps just the newest row per workflow, instead
+    of streaming every run for those workflows into Python. Only the status columns are selected —
+    never ``raw_payload``. The window form is dialect-portable (PG + sqlite ≥ 3.25). The id list is
+    chunked under the bind-param ceiling (NEW-4), so a small fleet is still a single query. Returns
     ``{workflow_id: LatestRun}``.
     """
-    if not workflow_ids:
-        return {}
-    rn = func.row_number().over(
-        partition_by=WorkflowRun.workflow_id,
-        order_by=(WorkflowRun.created_at.desc(), WorkflowRun.id.desc()),  # id breaks created ties
-    )
-    ranked = (
-        select(
-            WorkflowRun.id,
-            WorkflowRun.workflow_id,
-            WorkflowRun.status,
-            WorkflowRun.conclusion,
-            WorkflowRun.run_number,
-            rn.label("rn"),
+    out: dict[int, LatestRun] = {}
+    for chunk in _in_chunks(workflow_ids):
+        rn = func.row_number().over(
+            partition_by=WorkflowRun.workflow_id,
+            order_by=(WorkflowRun.created_at.desc(), WorkflowRun.id.desc()),  # id breaks ties
         )
-        .where(WorkflowRun.workflow_id.in_(workflow_ids))
-        .subquery()
-    )
-    stmt = select(
-        ranked.c.id, ranked.c.workflow_id, ranked.c.status, ranked.c.conclusion, ranked.c.run_number
-    ).where(ranked.c.rn == 1)
-    rows = (await session.execute(stmt)).all()
-    return {
-        row.workflow_id: LatestRun(
-            row.id, row.workflow_id, row.status, row.conclusion, row.run_number
+        ranked = (
+            select(
+                WorkflowRun.id,
+                WorkflowRun.workflow_id,
+                WorkflowRun.status,
+                WorkflowRun.conclusion,
+                WorkflowRun.run_number,
+                rn.label("rn"),
+            )
+            .where(WorkflowRun.workflow_id.in_(chunk))
+            .subquery()
         )
-        for row in rows
-    }
+        stmt = select(
+            ranked.c.id,
+            ranked.c.workflow_id,
+            ranked.c.status,
+            ranked.c.conclusion,
+            ranked.c.run_number,
+        ).where(ranked.c.rn == 1)
+        for row in (await session.execute(stmt)).all():
+            out[row.workflow_id] = LatestRun(
+                row.id, row.workflow_id, row.status, row.conclusion, row.run_number
+            )
+    return out
 
 
 async def list_failing_jobs(session: AsyncSession, run_ids: list[int]) -> list[WorkflowJob]:
@@ -204,16 +219,18 @@ async def list_failing_jobs(session: AsyncSession, run_ids: list[int]) -> list[W
 
     Replaces the per-run job fetch behind the Pipelines "which step failed?" annotation: the caller
     groups by ``run_id`` and takes the first failing job per run. ``raw_payload`` is loaded (the
-    step list lives there) but only for *failed* jobs of *failed* runs, so it stays bounded.
+    step list lives there) but only for *failed* jobs of *failed* runs, so it stays bounded. The
+    run-id list is chunked under the bind-param ceiling (NEW-4).
     """
-    if not run_ids:
-        return []
-    stmt = (
-        select(WorkflowJob)
-        .where(WorkflowJob.run_id.in_(run_ids), WorkflowJob.conclusion == "failure")
-        .order_by(WorkflowJob.run_id, WorkflowJob.id)
-    )
-    return list((await session.scalars(stmt)).all())
+    out: list[WorkflowJob] = []
+    for chunk in _in_chunks(run_ids):
+        stmt = (
+            select(WorkflowJob)
+            .where(WorkflowJob.run_id.in_(chunk), WorkflowJob.conclusion == "failure")
+            .order_by(WorkflowJob.run_id, WorkflowJob.id)
+        )
+        out.extend((await session.scalars(stmt)).all())
+    return out
 
 
 async def get_repo(session: AsyncSession, repo_id: int) -> Repo | None:
@@ -252,6 +269,46 @@ async def list_runs(
         stmt = stmt.where(WorkflowRun.status == status)
     stmt = stmt.order_by(WorkflowRun.created_at.desc()).limit(limit)
     return list((await session.scalars(stmt)).all())
+
+
+async def metrics_records(
+    session: AsyncSession, *, workflow_id: int, limit: int
+) -> list[dict[str, Any]]:
+    """The lightweight run records the metrics functions need — projected in SQL, newest first.
+
+    ``get_workflow_metrics`` only reads conclusion / head_sha / duration / queue time, so selecting
+    those five columns (deriving the two durations here) avoids hydrating full ORM rows — and, at
+    the metrics limit of up to 2000 runs, avoids dragging the heavy ``raw_payload`` JSONB across the
+    wire for every one (review 3, P1.1). The pure ``summarize_runs`` still owns the maths.
+    """
+    stmt = (
+        select(
+            WorkflowRun.conclusion,
+            WorkflowRun.head_sha,
+            WorkflowRun.created_at,
+            WorkflowRun.started_at,
+            WorkflowRun.completed_at,
+        )
+        .where(WorkflowRun.workflow_id == workflow_id)
+        .order_by(WorkflowRun.created_at.desc())
+        .limit(limit)
+    )
+    records: list[dict[str, Any]] = []
+    for row in (await session.execute(stmt)).all():
+        duration_s = queue_s = None
+        if row.started_at and row.completed_at:
+            duration_s = (row.completed_at - row.started_at).total_seconds()
+        if row.created_at and row.started_at:
+            queue_s = (row.started_at - row.created_at).total_seconds()
+        records.append(
+            {
+                "conclusion": row.conclusion,
+                "head_sha": row.head_sha,
+                "duration_s": duration_s,
+                "queue_s": queue_s,
+            }
+        )
+    return records
 
 
 def _open_findings_filter(stmt, *, repo_id, severity, finding_type):

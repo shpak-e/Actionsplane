@@ -7,9 +7,12 @@ webhooks dropped. Built on arq so workers are async-native and share the httpx c
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import socket
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
@@ -55,20 +58,61 @@ _HOLDER = f"{socket.gethostname()}:{os.getpid()}"
 _SWEEP_JOB_TIMEOUT = 900  # seconds
 
 
-async def _claim_sweep_lease(name: str, ttl_seconds: int) -> bool:
+async def _claim_sweep_lease(name: str, ttl_seconds: int, *, quiet: bool = False) -> bool:
     """Claim the single-flight lease for one cron sweep; False → another replica has it.
 
     Makes the sweeps safe at worker ``replicas > 1``: every replica's cron fires, but only the
     claimant proceeds. The TTL covers the tick (and clock skew between replicas) while expiring
-    before the next one, so a crashed holder can never wedge a sweep permanently.
+    before the next one, so a crashed holder can never wedge a sweep permanently. ``quiet``
+    suppresses the skip log for heartbeat self-refreshes (which own the lease and always succeed).
     """
     async with get_sessionmaker()() as session:
         ok = await claim_lease(
             session, name=f"sweep:{name}", holder=_HOLDER, ttl_seconds=ttl_seconds
         )
-    if not ok:
+    if not ok and not quiet:
         log.info("skipping %s sweep: lease held by another worker", name)
     return ok
+
+
+# Reconcile lease: a short TTL keeps a *crashed* holder from wedging the 5-min sweep for long,
+# while a heartbeat re-claims often enough that a *live* holder never lapses mid-sweep — even
+# though a sweep may run up to job_timeout (900s), far past the tick (review 4, NEW-8). This
+# decouples the TTL from the sweep's duration, which was the flaw in the old fixed 1020s TTL.
+_RECONCILE_LEASE_TTL = 180
+_RECONCILE_HEARTBEAT = 60
+
+
+@contextlib.asynccontextmanager
+async def _sweep_lease(
+    name: str, *, ttl_seconds: int, heartbeat_seconds: int | None = None
+) -> AsyncIterator[bool]:
+    """Hold a sweep lease for the duration of a ``with`` block, optionally heartbeating it.
+
+    Yields True if this worker owns the lease (proceed) or False if another replica holds it
+    (skip). When ``heartbeat_seconds`` is set, a background task self-refreshes the lease on that
+    cadence so a long sweep can keep a short TTL — the refresh is a no-op cost (one tiny upsert)
+    and always succeeds because the holder matches. The task is cancelled on exit.
+    """
+    if not await _claim_sweep_lease(name, ttl_seconds):
+        yield False
+        return
+    beat: asyncio.Task | None = None
+    if heartbeat_seconds:
+
+        async def _heartbeat() -> None:
+            while True:
+                await asyncio.sleep(heartbeat_seconds)
+                await _claim_sweep_lease(name, ttl_seconds, quiet=True)  # self-refresh
+
+        beat = asyncio.create_task(_heartbeat())
+    try:
+        yield True
+    finally:
+        if beat is not None:
+            beat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await beat
 
 
 class RateGate:
@@ -164,45 +208,48 @@ async def reconcile(ctx: dict) -> int:
     settings = get_settings()
     if not settings.github_app_id or not settings.github_app_private_key_path:
         return 0
-    # TTL above the sweep's worst-case runtime so a live holder can't lapse mid-sweep and let a
-    # second replica double-run; the holder re-claims (self-refresh) on its next tick (4d).
-    if not await _claim_sweep_lease("reconcile", ttl_seconds=_SWEEP_JOB_TIMEOUT + 120):
-        return 0
+    # Short TTL (crashed holder recovers fast) + heartbeat (live holder never lapses mid-sweep),
+    # instead of a fixed TTL sized to the worst-case sweep duration (review 4, NEW-8).
+    async with _sweep_lease(
+        "reconcile", ttl_seconds=_RECONCILE_LEASE_TTL, heartbeat_seconds=_RECONCILE_HEARTBEAT
+    ) as held:
+        if not held:
+            return 0
 
-    jwt = app_jwt()
-    gate = RateGate(settings.rate_limit_floor)
-    # Only ask GitHub for runs created within the lookback window (server-side filter), and cap the
-    # walk — a reconcile is a dropped-webhook safety net, so it never needs deep history (4b).
-    created_floor = (
-        datetime.now(UTC) - timedelta(hours=settings.reconcile_lookback_hours)
-    ).strftime(">=%Y-%m-%d")
-    sessionmaker = get_sessionmaker()
-    async with sessionmaker() as session:
-        repos = await list_repos(session, watched_only=True)
+        jwt = app_jwt()
+        gate = RateGate(settings.rate_limit_floor)
+        # Only ask GitHub for runs created within the lookback window (server-side filter), and cap
+        # the walk — a reconcile is a dropped-webhook safety net, so it needs no deep history (4b).
+        created_floor = (
+            datetime.now(UTC) - timedelta(hours=settings.reconcile_lookback_hours)
+        ).strftime(">=%Y-%m-%d")
+        sessionmaker = get_sessionmaker()
+        async with sessionmaker() as session:
+            repos = await list_repos(session, watched_only=True)
 
-    async def reconcile_one(repo, http, cache: TokenCache) -> int:
-        if gate.tripped:
-            return 0  # budget exhausted mid-sweep; this repo waits for the next tick
-        gh = await client_for_installation(
-            repo.installation_id, http=http, jwt=jwt, token_cache=cache
-        )
-        runs = await gh.list_workflow_runs(
-            repo.owner, repo.name, created=created_floor, max_runs=100
-        )
-        gate.note(gh)
-        async with sessionmaker() as s:
-            for run in runs:
-                await upsert_run(s, events.normalize_run_object(run, repo.id))
-            await s.commit()
-        return len(runs)
+        async def reconcile_one(repo, http, cache: TokenCache) -> int:
+            if gate.tripped:
+                return 0  # budget exhausted mid-sweep; this repo waits for the next tick
+            gh = await client_for_installation(
+                repo.installation_id, http=http, jwt=jwt, token_cache=cache
+            )
+            runs = await gh.list_workflow_runs(
+                repo.owner, repo.name, created=created_floor, max_runs=100
+            )
+            gate.note(gh)
+            async with sessionmaker() as s:
+                for run in runs:
+                    await upsert_run(s, events.normalize_run_object(run, repo.id))
+                await s.commit()
+            return len(runs)
 
-    async with httpx.AsyncClient(timeout=30) as http:
-        cache: TokenCache = {}
-        counts = await bounded_gather(
-            [reconcile_one(r, http, cache) for r in repos],
-            limit=settings.fetch_concurrency,
-        )
-    return sum(counts)
+        async with httpx.AsyncClient(timeout=30) as http:
+            cache: TokenCache = {}
+            counts = await bounded_gather(
+                [reconcile_one(r, http, cache) for r in repos],
+                limit=settings.fetch_concurrency,
+            )
+        return sum(counts)
 
 
 async def audit_all(ctx: dict) -> int:

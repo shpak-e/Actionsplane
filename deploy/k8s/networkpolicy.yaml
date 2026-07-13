@@ -1,0 +1,177 @@
+# NetworkPolicies — default-deny + least-privilege allows (review 3/4, N2).
+#
+# NOTE: these are enforced only by a CNI that implements NetworkPolicy (Calico, Cilium, etc.).
+# On a non-enforcing CNI they are silently no-ops (safe). The primary goal is EGRESS control: this
+# service holds a GitHub App key, so a compromised container must not be able to reach arbitrary
+# hosts. Ingress rules are scoped to each component's own service port. api/worker are the only
+# components allowed out to the internet (GitHub REST on :443); the ingestor never calls GitHub.
+---
+# Deny all ingress+egress for every pod in the namespace; the allow-policies below re-open the
+# minimum. A pod with no matching allow gets nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: actionsplane
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# DNS for everyone (kube-dns / node-local DNS on 53). Without this every egress lookup fails.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: actionsplane
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Postgres: only the app components may connect on 5432; no egress of its own (DNS aside).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: actionsplane
+spec:
+  podSelector:
+    matchLabels: { app: actionsplane-postgres }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: actionsplane-api } }
+        - podSelector: { matchLabels: { app: actionsplane-ingestor } }
+        - podSelector: { matchLabels: { app: actionsplane-worker } }
+        - podSelector: { matchLabels: { app: actionsplane-migrate } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# Redis: only api/ingestor/worker may connect on 6379.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+  namespace: actionsplane
+spec:
+  podSelector:
+    matchLabels: { app: actionsplane-redis }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: actionsplane-api } }
+        - podSelector: { matchLabels: { app: actionsplane-ingestor } }
+        - podSelector: { matchLabels: { app: actionsplane-worker } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+# API: reachable on 8000 (Ingress controller + frontend); egress to PG, Redis, and GitHub :443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api
+  namespace: actionsplane
+spec:
+  podSelector:
+    matchLabels: { app: actionsplane-api }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8000 }
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: actionsplane-postgres } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector: { matchLabels: { app: actionsplane-redis } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # GitHub REST/SARIF/PRs — HTTPS to any host (NetworkPolicy can't match DNS names). This is the
+    # only broad egress, and only api/worker get it.
+    - ports:
+        - { protocol: TCP, port: 443 }
+---
+# Ingestor: reachable on 8001 (webhooks via the Ingress); egress to PG + Redis only — it verifies
+# HMAC and enqueues, and never calls GitHub, so it gets NO :443 egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingestor
+  namespace: actionsplane
+spec:
+  podSelector:
+    matchLabels: { app: actionsplane-ingestor }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8001 }
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: actionsplane-postgres } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector: { matchLabels: { app: actionsplane-redis } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+# Worker: no inbound (it's a queue consumer / cron); egress to PG, Redis, and GitHub :443.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker
+  namespace: actionsplane
+spec:
+  podSelector:
+    matchLabels: { app: actionsplane-worker }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: actionsplane-postgres } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector: { matchLabels: { app: actionsplane-redis } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+    - ports:
+        - { protocol: TCP, port: 443 }
+---
+# Migrate Job: short-lived, needs PG on 5432 only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: migrate
+  namespace: actionsplane
+spec:
+  podSelector:
+    matchLabels: { app: actionsplane-migrate }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: actionsplane-postgres } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+# Frontend (nginx): reachable on 80 (Ingress); egress to the API on 8000 only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend
+  namespace: actionsplane
+spec:
+  podSelector:
+    matchLabels: { app: actionsplane-frontend }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 80 }
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app: actionsplane-api } }
+      ports:
+        - { protocol: TCP, port: 8000 }

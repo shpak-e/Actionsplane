@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import re
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -60,12 +61,42 @@ class InstallationCache:
     (steady-state sweeps re-validate with cheap 304s; the rate gate keeps a per-install view).
     Crucially it holds **no httpx transport** — each worker job owns its own client + transport,
     so one job closing its transport can never break another mid-request (review 4, NEW-1).
+
+    The ETag cache is a real **LRU bounded by both entry count and total bytes** (review 4, NEW-7).
+    Now that clients are long-lived, a naive 1k-entry FIFO of parsed run pages (each up to ~100
+    run objects) could hold hundreds of MB resident *per installation*; the byte cap is the true
+    guard, the entry cap a cheap backstop. Eviction is genuinely least-recently-used: a cache hit
+    moves the key to the most-recent end, so a hot URL survives a flood of one-off pages.
     """
 
-    etag_cache: dict[str, tuple[str, object]] = field(default_factory=dict)
+    etag_cache: OrderedDict[str, tuple[str, object, int]] = field(default_factory=OrderedDict)
     rate_budget: RateBudget = field(default_factory=RateBudget)
-    # ~1k urls; insertion-order eviction so a long-lived cache can't grow forever (review 3, 4c).
-    cap: int = 1000
+    cap: int = 1000  # max entries (backstop)
+    max_bytes: int = 64 * 1024 * 1024  # ~64 MiB of cached bodies per installation
+    _bytes: int = 0  # running sum of cached body sizes, kept in step with etag_cache
+
+    def get(self, key: str) -> tuple[str, object] | None:
+        """LRU read: return ``(etag, body)`` and mark the entry most-recently-used, or None."""
+        entry = self.etag_cache.get(key)
+        if entry is None:
+            return None
+        self.etag_cache.move_to_end(key)
+        return entry[0], entry[1]
+
+    def store(self, key: str, etag: str, body: object, size: int) -> None:
+        """Insert/replace an entry, then evict LRU until under both the entry and byte caps.
+
+        A body larger than ``max_bytes`` on its own is added then immediately evicted (the cache
+        stays empty rather than blowing the budget) — it simply won't 304 next time, which is safe.
+        """
+        old = self.etag_cache.pop(key, None)
+        if old is not None:
+            self._bytes -= old[2]
+        self.etag_cache[key] = (etag, body, size)
+        self._bytes += size
+        while self.etag_cache and (len(self.etag_cache) > self.cap or self._bytes > self.max_bytes):
+            _, evicted = self.etag_cache.popitem(last=False)  # oldest = least-recently-used
+            self._bytes -= evicted[2]
 
 
 def _retry_after_delay(raw: str) -> float:
@@ -163,8 +194,7 @@ class GitHubClient:
         (seconds); we sleep and retry once. Primary rate limits are surfaced to the caller's pacing.
         """
         key = self._cache_key(url, params)
-        etag_cache = self._cache.etag_cache
-        cached = etag_cache.get(key)
+        cached = self._cache.get(key)  # (etag, body) | None — LRU-touches on hit
         headers = dict(self._headers)
         if cached is not None:
             headers["If-None-Match"] = cached[0]
@@ -181,9 +211,8 @@ class GitHubClient:
         body = resp.json()
         etag = resp.headers.get("etag")
         if etag:
-            if key not in etag_cache and len(etag_cache) >= self._cache.cap:
-                etag_cache.pop(next(iter(etag_cache)), None)  # evict oldest (insertion order)
-            etag_cache[key] = (etag, body)
+            # len(resp.content) is a cheap, monotonic proxy for the body's memory footprint.
+            self._cache.store(key, etag, body, len(resp.content))
         return body, resp.headers
 
     async def _get_json(self, url: str, *, params: dict | None = None) -> object:
