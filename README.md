@@ -9,13 +9,11 @@
 
 Teams that own many repos juggle four problems no single OSS tool solves end-to-end: status fragmentation (N tabs to see if builds are green), workflow drift (the same workflow copy-pasted everywhere slowly diverges), supply-chain blindness (unpinned actions, over-broad `GITHUB_TOKEN` scopes), and no cross-repo metrics (which repo burns the most minutes? which workflow is flakiest?). ActionsPlane combines the **observe + audit + edit** triangle that existing tools only cover in fragments — and does all edits safely, through PRs.
 
-See [`plan.md`](plan.md) for the full design rationale, differentiation, and phased roadmap, and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the runtime view.
-
 ## Status
 
 **⚠️ Testing / preview — not production-ready.** Functionally complete in a local sandbox, but still pending live validation against a real GitHub org (see end of this section). Treat everything below as "works in dev", not "ready to deploy".
 
-**Phases 1–4 functional (v1 feature-complete), v1.1 hardening done, Phase 5 trust hardening done except live validation, + GitLab provider started (v2). 157 tests green; ruff-clean; 10 Alembic migrations.** The docker stack + schema are validated against a real Postgres locally (2026-06-01), and the **React dashboard** (redesigned — Runs / Security / Drift / **Pipelines**, deep links to GitHub Actions, run drawer with job logs + re-run) builds and runs live against the API in `docker-compose.full.yml` (frontend on :3001). The **Pipelines** tab maps the fleet-wide cross-workflow trigger graph (`workflow_run` chains, reusable-workflow calls, cross-repo PR/dispatch) as a **layered left→right flow graph** — repo-coloured node cards, typed/curved connectors, precise-vs-heuristic edges. Each node shows its **latest-run status** and, when a pipeline failed, **the job/step that failed** (e.g. `Deploy → terraform apply`); the run drawer renders a **per-job step tree** highlighting the failing step. Two ways to populate it: a **GitHub App** (live webhooks), or **offline mode** — point it at a list of public repos and it pulls their workflows/runs over the public API with a Sync button, no App needed. The full live ingest→PR loop against a real GitHub org is still pending (next live validation). **See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)** to run it locally, view the UI, and add repos.
+**Phases 1–4 functional (v1 feature-complete), v1.1 hardening done, Phase 5 trust hardening done, the Phase 5.0 pre-live-validation hardening sprint done (2026-07-14) — live validation is the sole remaining blocker — + GitLab provider started (v2). 238 tests green; ruff-clean; 11 Alembic migrations.** The docker stack + schema are validated against a real Postgres locally (2026-06-01), and the **React dashboard** (redesigned — Runs / Security / Drift / **Pipelines**, deep links to GitHub Actions, run drawer with job logs + re-run) builds and runs live against the API in `docker-compose.full.yml` (frontend on :3001). The **Pipelines** tab maps the fleet-wide cross-workflow trigger graph (`workflow_run` chains, reusable-workflow calls, cross-repo PR/dispatch) as a **layered left→right flow graph** — repo-coloured node cards, typed/curved connectors, precise-vs-heuristic edges. Each node shows its **latest-run status** and, when a pipeline failed, **the job/step that failed** (e.g. `Deploy → terraform apply`); the run drawer renders a **per-job step tree** highlighting the failing step. Two ways to populate it: a **GitHub App** (live webhooks), or **offline mode** — point it at a list of public repos and it pulls their workflows/runs over the public API with a Sync button, no App needed. The full live ingest→PR loop against a real GitHub org is still pending (next live validation). **See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)** to run it locally, view the UI, and add repos.
 
 **v1.1 hardening shipped (this pass):** Link-header **pagination** for `list_workflow_runs`/`list_workflow_files` (bounded by `max_runs`, truncation logged not silent); **SARIF orchestration end-to-end** — `POST /repos/{id}/sarif/upload` + a post-audit worker step push findings to Code Scanning, gated by `security_events_enabled` (empty result-sets upload too, so resolved findings close their alerts); **SSE disconnect-safe** stream (bus subscription `aclose`'d in a `finally` + keep-alive `ping`, so a closed tab can't strand a Redis connection); **OpenTelemetry tracing** wired as one distributed trace across ingest → worker → audit → SARIF (W3C context carried over the arq queue; off by default, import-safe); **hypothesis property tests** pinning the pin-classifier and the SHA-pinning edit (idempotent, comment-preserving, never emits un-parseable YAML).
 
@@ -30,7 +28,9 @@ CLI: `audit all|pins|perms --file`, `drift --template <a> --against <b>`, `campa
 
 **Phase 5 trust hardening shipped (2026-07, except live validation):** append-only **write-operation audit log** (every mutating endpoint + worker SARIF step; `GET /api/v1/audit-log`) with **two-tier RBAC** (operate vs. read-only bearer token, fail-closed); **sweep leases** (portable atomic lease table — `worker replicas > 1` can no longer double-audit/double-PR); **job-upsert ordering gate** (SQL status-rank `CASE`, same guard class as the 0008 run fix); **per-install rate-limit budget** (`X-RateLimit-*` tracking + configurable floor; sweeps pause gracefully and resume next tick); **retention pruning cron** (raw webhook payloads nulled after N days keeping normalized history, delivery-dedup rows expired; batched, lease-guarded). Plus a **UI renovation**: warm-paper Claude-style design language (terracotta accent, serif display, soft status tints, recoloured pipeline graph).
 
-**Next (v2 roadmap, 2026-07):** Phase 5.1 — **live validation** against a real org (the remaining blocker); then Phase 6 — the **policy-era wedge**: policy-readiness simulator, lockfile campaigns, SARIF ingest→converge-PRs. Full phased plan: [`plan.md` §14](plan.md); rationale: [`docs/architect-review-2026-07.md`](docs/architect-review-2026-07.md).
+**Phase 5.0 hardening sprint shipped (2026-07-14):** the pre-live-validation pass from an external security + performance review. **Security** — Redis now requires a password (unauthenticated Redis had let anyone on the port enqueue arq jobs, bypassing the webhook HMAC boundary); default-deny NetworkPolicies default-on in Helm; ingress TLS by default; `campaign.operation` charset-validated + registry-dispatched (a campaign can't silently run pin-shas under another label); pin-refs resolved from the parsed AST (not a text scan); PR-body escaping; owner/repo URL guard; SSE subscriber cap; `get_file_text` size cap; `npm audit` in CI. **Performance** (reference scale 500 repos / 50k runs) — the never-read `raw_payload` JSONB is deferred off every hot run/job query; `/pipelines` latest-run uses a `JOIN LATERAL` top-1 on Postgres (O(workflows), not O(history)) + a short TTL cache; `get_file_text` routed through the ETag cache (free 304s on repeat sweeps); reconcile batches its upserts into one statement and drops `raw_payload`; the audit/drift sweeps release the DB connection during GitHub I/O; SSE moved to a single process-wide reader fanning out to per-client queues.
+
+**Next:** **Phase 5.1 — live validation** against a real org (the remaining blocker): install the App, run ingest → audit → SARIF → campaign dry-run → PR end-to-end, and capture the write-path HTTP cassette corpus. After that, two parallel tracks — the **policy-era wedge** (policy-readiness simulator, immutable pins, lockfile campaigns) and the **durable platform** (zizmor-orchestrated fix campaigns, MCP server, agentic-CI governance).
 
 ## Quickstart
 
@@ -38,7 +38,7 @@ CLI: `audit all|pins|perms --file`, `drift --template <a> --against <b>`, `campa
 make install        # uv sync (creates the venv, installs dev extras)
 make up             # start Postgres + Redis (docker compose)
 make migrate        # apply Alembic migrations
-make test           # run the test suite (157 passing, hermetic)
+make test           # run the test suite (238 passing, hermetic)
 make lint           # ruff check + format check
 
 # full sandbox (Postgres + Redis + API + ingestor + worker, auto-migrated):
@@ -83,11 +83,11 @@ actionsplane/
 │   ├── observability/          OpenTelemetry tracing (optional, import-safe)
 │   └── cli/                    `actionsplane` Typer CLI
 ├── frontend/                   React + Vite + TanStack Query dashboard (builds + runs; SSE live updates)
-├── migrations/                 Alembic env + 9 schema migrations
+├── migrations/                 Alembic env + 11 schema migrations
 ├── deploy/                     docker-compose dev + full stacks, Dockerfiles, k8s + Helm
 ├── scripts/seed_local.py       seed a demo installation/repos/runs for local testing
 ├── docs/USER_GUIDE.md          run it locally, seed data, add repos via the GitHub App
-├── tests/                      129 tests (pins, parser, audit, scorecard, drift, relations, operations, property[hypothesis], campaign svc, gitlab, factory, api-auth, api-endpoints-db, rerun, offline, cli-local, signature, auth, events/bus, metrics, client[+pagination], sarif, sarif-service, tracing, etag/backoff, ingestor-hardening, run-ordering)
+├── tests/                      238 tests (pins, parser, audit, scorecard, drift, relations, operations, property[hypothesis], campaign svc, gitlab, factory, api-auth/middleware, api-endpoints-db, rerun, offline, cli-local, signature, auth, events/bus[fan-out], metrics[+records], client[+pagination/etag], sarif, sarif-service, tracing, ingestor-hardening, run-ordering[+batch], job-ordering, lease, sweep-lease, retention, deferred-payload, installation-cache, config-redis, pipelines-query/status, security-lows)
 └── .github/workflows/ci.yml    lint + test; third-party actions SHA-pinned (dogfooding)
 ```
 
@@ -99,7 +99,7 @@ actionsplane/
 | 2 — Audit ✅ | Surface every security/hygiene problem | Pin / publisher / permission / deprecation audits + CLI |
 | 3 — Drift ✅ | Detect divergence from canonical workflows | Template registry + AST diff + drift dashboard |
 | 4 — Edit ✅ | Safe bulk operations via PRs | Campaign engine + dry-run/diff + auto-merge |
-| 5 — Live validation & trust (5.2–5.6 ✅) | Proven against a real org; safe to hold `contents:write` | ✅ write audit log + RBAC, sweep leases, job-ordering gate, rate-limit budget, retention pruning · ⏳ live ingest→audit→SARIF→PR loop + cassette corpus |
+| 5 — Live validation & trust (5.0, 5.2–5.6 ✅) | Proven against a real org; safe to hold `contents:write` | ✅ write audit log + RBAC, sweep leases, job-ordering gate, rate-limit budget, retention pruning; **5.0 hardening sprint** (Redis auth, NetworkPolicies + TLS, deferred payloads, LATERAL pipelines, ETag'd file fetches, batched reconcile, SSE fan-out) · ⏳ 5.1 live ingest→audit→SARIF→PR loop + cassette corpus |
 | 6 — Policy-era wedge | Remediation engine for GitHub's native enforcement | Policy-readiness simulator → fix campaigns, lockfile campaigns, SARIF ingest→converge-PRs |
 | 7 — Observe v2 | Consume GitHub's new telemetry, not compete with it | Actions Data Stream adapter, metric rollups+retention, Renovate coexistence, Pipelines job-DAG |
 | 8 — Enterprise & breadth | Wider deployment surface | Scoped-secrets migrations, GHES, LLM-assisted remediation (gated), MCP server, GitLab pillars |

@@ -38,6 +38,7 @@ deploy/**/*.html
 # internal design / working docs — the public repo keeps only README.md
 /plan.md
 /docs/
+/ROADMAP.md
 
 # tooling
 .mise.local.toml
