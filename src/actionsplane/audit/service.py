@@ -43,16 +43,22 @@ async def _audit_repo(
     *,
     publisher_allowlist: set[str] | None = None,
 ) -> int:
-    seen: set[str] = set()
-    written = 0
+    # Phase 1 — all GitHub I/O + pure analysis, BEFORE touching the DB (review §5 M2). An async
+    # session only checks a connection out of the pool on its first query, so doing every fetch
+    # here means the connection stays in the pool during the slow network calls instead of being
+    # held across them — which is what let concurrent sweeps exhaust the pool.
+    parsed: list[tuple[str, object]] = []  # (path, workflow)
     for path in await gh.list_workflow_files(repo.owner, repo.name):
         try:
             text = await gh.get_file_text(repo.owner, repo.name, path)
-            wf = parse_workflow(text, path)
+            parsed.append((path, parse_workflow(text, path)))
         except Exception:  # one bad file should not abort the whole repo audit
             log.warning("skipping unparseable workflow %s/%s:%s", repo.owner, repo.name, path)
-            continue
-        # Persist the cross-workflow relation facts for the Pipelines graph.
+
+    # Phase 2 — DB writes only (connection checked out here, released on commit).
+    seen: set[str] = set()
+    written = 0
+    for path, wf in parsed:
         await upsert_workflow_relation(
             session, repo_id=repo.id, path=path, name=wf.name, descriptor=extract_relations(wf)
         )

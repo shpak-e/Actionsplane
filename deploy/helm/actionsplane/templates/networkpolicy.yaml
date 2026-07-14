@@ -1,0 +1,171 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $inst := .Release.Name }}
+{{- $labels := include "actionsplane.labels" . }}
+# Default-deny + least-privilege NetworkPolicies (review 3/4, N2). Opt-in via networkPolicy.enabled
+# because they only do anything on a policy-enforcing CNI (Calico/Cilium/…) and a mismatched CNI
+# should not surprise an operator. Primary goal: EGRESS control — api/worker are the only pods
+# allowed out to GitHub on :443; the ingestor (HMAC-verify + enqueue only) never reaches GitHub.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-default-deny
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-allow-dns
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+{{- if .Values.postgres.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-postgres
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: postgres, app.kubernetes.io/instance: {{ $inst }} }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: api, app.kubernetes.io/instance: {{ $inst }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: ingestor, app.kubernetes.io/instance: {{ $inst }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker, app.kubernetes.io/instance: {{ $inst }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: migrate, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+{{- end }}
+{{- if .Values.redis.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-redis
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: redis, app.kubernetes.io/instance: {{ $inst }} }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: api, app.kubernetes.io/instance: {{ $inst }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: ingestor, app.kubernetes.io/instance: {{ $inst }} } }
+        - podSelector: { matchLabels: { app.kubernetes.io/component: worker, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-api
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: api, app.kubernetes.io/instance: {{ $inst }} }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8000 }
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: postgres, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: redis, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # GitHub REST/SARIF/PRs over HTTPS to any host (NetworkPolicy can't match DNS names).
+    - ports:
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-ingestor
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: ingestor, app.kubernetes.io/instance: {{ $inst }} }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 8001 }
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: postgres, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: redis, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-worker
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: worker, app.kubernetes.io/instance: {{ $inst }} }
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: postgres, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: redis, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 6379 }
+    - ports:
+        - { protocol: TCP, port: 443 }
+{{- if .Values.migrate.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-migrate
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: migrate, app.kubernetes.io/instance: {{ $inst }} }
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: postgres, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 5432 }
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "actionsplane.fullname" . }}-frontend
+  labels: {{- $labels | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: frontend, app.kubernetes.io/instance: {{ $inst }} }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - ports:
+        - { protocol: TCP, port: 80 }
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/component: api, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 8000 }
+{{- end }}

@@ -15,6 +15,8 @@ resources:
   - worker.yaml
   - frontend.yaml
   - ingress.yaml
+  # Default-deny + least-privilege NetworkPolicies (enforced only by a policy-capable CNI; N2).
+  - networkpolicy.yaml
 
 # Pin all five images to one tag in one place. Override the registry/tag per environment with
 # `kustomize edit set image` or an overlay.

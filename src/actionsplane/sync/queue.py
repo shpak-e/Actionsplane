@@ -18,7 +18,7 @@ _pool: ArqRedis | None = None
 async def get_pool() -> ArqRedis:
     global _pool
     if _pool is None:
-        _pool = await create_pool(RedisSettings.from_dsn(get_settings().redis_url))
+        _pool = await create_pool(RedisSettings.from_dsn(get_settings().effective_redis_url))
     return _pool
 
 

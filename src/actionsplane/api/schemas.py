@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+# A campaign operation name flows into a git ref (refs/heads/actionsplane/<op>-<id>), PR titles,
+# and commit messages, so constrain it to a safe charset before it ever reaches those (review §4
+# L-1). Registry-membership (is this an operation we actually implement?) is checked at the
+# endpoint, where the OPERATIONS registry is already imported.
+_OPERATION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class RepoOut(BaseModel):
@@ -131,6 +138,13 @@ class CampaignCreate(BaseModel):
     name: str
     operation: str = "pin-shas"
     repo_ids: list[int]
+
+    @field_validator("operation")
+    @classmethod
+    def _operation_charset(cls, v: str) -> str:
+        if not _OPERATION_RE.match(v):
+            raise ValueError("operation must match ^[A-Za-z0-9._-]+$")
+        return v
 
 
 class CampaignTargetOut(BaseModel):

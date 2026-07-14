@@ -14,6 +14,7 @@ import json
 import logging
 import math
 import re
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -28,9 +29,24 @@ log = logging.getLogger(__name__)
 
 _ACCEPT = "application/vnd.github+json"
 _API_VERSION = "2022-11-28"
+# Ceiling on a fetched workflow file's decoded size (review §4). A real workflow is a few KB; a
+# multi-MB "file" is hostile or wrong, and parsing it wastes memory downstream. 2 MiB is generous.
+_MAX_FILE_BYTES = 2 * 1024 * 1024
 
 # RFC 5988 Link header: <https://api.github.com/...?page=2>; rel="next", <...>; rel="last"
 _NEXT_LINK_RE = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
+
+# GitHub owner/repo names are limited to this charset. We interpolate them straight into URL paths
+# (unlike ``path``/``ref``, which are ``quote``d), so validate them defensively — a crafted value
+# with ``/`` or ``?`` could otherwise reshape the request path (review §4 L-4). Sources are
+# effectively trusted (synced repo rows), so this is belt-and-suspenders.
+_OWNER_REPO_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _check_owner_repo(owner: str, repo: str) -> None:
+    for seg, kind in ((owner, "owner"), (repo, "repo")):
+        if not _OWNER_REPO_RE.match(seg):
+            raise ValueError(f"invalid {kind} segment {seg!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,12 +76,42 @@ class InstallationCache:
     (steady-state sweeps re-validate with cheap 304s; the rate gate keeps a per-install view).
     Crucially it holds **no httpx transport** — each worker job owns its own client + transport,
     so one job closing its transport can never break another mid-request (review 4, NEW-1).
+
+    The ETag cache is a real **LRU bounded by both entry count and total bytes** (review 4, NEW-7).
+    Now that clients are long-lived, a naive 1k-entry FIFO of parsed run pages (each up to ~100
+    run objects) could hold hundreds of MB resident *per installation*; the byte cap is the true
+    guard, the entry cap a cheap backstop. Eviction is genuinely least-recently-used: a cache hit
+    moves the key to the most-recent end, so a hot URL survives a flood of one-off pages.
     """
 
-    etag_cache: dict[str, tuple[str, object]] = field(default_factory=dict)
+    etag_cache: OrderedDict[str, tuple[str, object, int]] = field(default_factory=OrderedDict)
     rate_budget: RateBudget = field(default_factory=RateBudget)
-    # ~1k urls; insertion-order eviction so a long-lived cache can't grow forever (review 3, 4c).
-    cap: int = 1000
+    cap: int = 1000  # max entries (backstop)
+    max_bytes: int = 64 * 1024 * 1024  # ~64 MiB of cached bodies per installation
+    _bytes: int = 0  # running sum of cached body sizes, kept in step with etag_cache
+
+    def get(self, key: str) -> tuple[str, object] | None:
+        """LRU read: return ``(etag, body)`` and mark the entry most-recently-used, or None."""
+        entry = self.etag_cache.get(key)
+        if entry is None:
+            return None
+        self.etag_cache.move_to_end(key)
+        return entry[0], entry[1]
+
+    def store(self, key: str, etag: str, body: object, size: int) -> None:
+        """Insert/replace an entry, then evict LRU until under both the entry and byte caps.
+
+        A body larger than ``max_bytes`` on its own is added then immediately evicted (the cache
+        stays empty rather than blowing the budget) — it simply won't 304 next time, which is safe.
+        """
+        old = self.etag_cache.pop(key, None)
+        if old is not None:
+            self._bytes -= old[2]
+        self.etag_cache[key] = (etag, body, size)
+        self._bytes += size
+        while self.etag_cache and (len(self.etag_cache) > self.cap or self._bytes > self.max_bytes):
+            _, evicted = self.etag_cache.popitem(last=False)  # oldest = least-recently-used
+            self._bytes -= evicted[2]
 
 
 def _retry_after_delay(raw: str) -> float:
@@ -143,8 +189,18 @@ class GitHubClient:
     async def get_repo_meta(self, owner: str, repo: str) -> dict[str, Any]:
         """Fetch a repo's metadata (id, default_branch, archived) — needed to upsert the row
         in offline mode where there's no installation webhook to supply it."""
-        body = await self._get_json(f"{self._base}/repos/{owner}/{repo}")
+        body = await self._get_json(f"{self._repo(owner, repo)}")
         return body if isinstance(body, dict) else {}
+
+    def _repo(self, owner: str, repo: str) -> str:
+        """Validated ``{base}/repos/{owner}/{repo}`` URL prefix (review §4 L-4).
+
+        owner/repo interpolate straight into the path (unlike ``quote``d ``path``/``ref``), so
+        every repo-scoped URL is built through here to reject a crafted segment centrally.
+        """
+        _check_owner_repo(owner, repo)
+        prefix = f"{self._base}/repos"
+        return f"{prefix}/{owner}/{repo}"
 
     @staticmethod
     def _cache_key(url: str, params: dict | None) -> str:
@@ -163,8 +219,7 @@ class GitHubClient:
         (seconds); we sleep and retry once. Primary rate limits are surfaced to the caller's pacing.
         """
         key = self._cache_key(url, params)
-        etag_cache = self._cache.etag_cache
-        cached = etag_cache.get(key)
+        cached = self._cache.get(key)  # (etag, body) | None — LRU-touches on hit
         headers = dict(self._headers)
         if cached is not None:
             headers["If-None-Match"] = cached[0]
@@ -181,9 +236,8 @@ class GitHubClient:
         body = resp.json()
         etag = resp.headers.get("etag")
         if etag:
-            if key not in etag_cache and len(etag_cache) >= self._cache.cap:
-                etag_cache.pop(next(iter(etag_cache)), None)  # evict oldest (insertion order)
-            etag_cache[key] = (etag, body)
+            # len(resp.content) is a cheap, monotonic proxy for the body's memory footprint.
+            self._cache.store(key, etag, body, len(resp.content))
         return body, resp.headers
 
     async def _get_json(self, url: str, *, params: dict | None = None) -> object:
@@ -257,7 +311,7 @@ class GitHubClient:
             params["created"] = created
         runs: list[dict[str, Any]] = []
         async for page in self._get_paginated(
-            f"{self._base}/repos/{owner}/{repo}/actions/runs",
+            f"{self._repo(owner, repo)}/actions/runs",
             params=params,
         ):
             if isinstance(page, dict):
@@ -273,7 +327,7 @@ class GitHubClient:
         The contents API returns up to 1,000 entries and historically does not page, but walking
         ``rel="next"`` is forward-safe and a no-op for the single-page case.
         """
-        url = f"{self._base}/repos/{owner}/{repo}/contents/.github/workflows"
+        url = f"{self._repo(owner, repo)}/contents/.github/workflows"
         out: list[str] = []
         try:
             async for page in self._get_paginated(url):
@@ -289,17 +343,26 @@ class GitHubClient:
         return out
 
     async def get_file_text(self, owner: str, repo: str, path: str) -> str:
-        """Decoded text content of a file via the contents API (base64 payload)."""
+        """Decoded text content of a file via the contents API (base64 payload).
+
+        Routed through the ETag cache (review §5 H3): audit + drift sweeps re-read the same workflow
+        bodies every tick, so on the second+ sweep this revalidates with a conditional request that
+        GitHub answers 304 (no body transfer, and 304s don't count against the rate-limit budget)
+        instead of re-downloading every file. The unchanged content comes back from the cache.
+        """
         if ".." in path.split("/"):
             raise ValueError(f"refusing path traversal in {path!r}")
         safe_path = quote(path)  # keep "/" but encode the rest, preventing URL injection
-        resp = await self._client.get(
-            f"{self._base}/repos/{owner}/{repo}/contents/{safe_path}",
-            headers=self._headers,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return base64.b64decode(data["content"]).decode("utf-8")
+        body = await self._get_json(f"{self._repo(owner, repo)}/contents/{safe_path}")
+        if not isinstance(body, dict) or "content" not in body:
+            raise ValueError(f"unexpected contents payload for {path!r}")
+        # The API reports the byte size; reject an oversized file before decoding it into memory.
+        if isinstance(body.get("size"), int) and body["size"] > _MAX_FILE_BYTES:
+            raise ValueError(f"file {path!r} is {body['size']} bytes (> {_MAX_FILE_BYTES} cap)")
+        decoded = base64.b64decode(body["content"])
+        if len(decoded) > _MAX_FILE_BYTES:  # defensive: trust the bytes, not just the reported size
+            raise ValueError(f"file {path!r} decoded to {len(decoded)} bytes (> cap)")
+        return decoded.decode("utf-8")
 
     async def get_file(self, owner: str, repo: str, path: str, *, ref: str | None = None) -> dict:
         """Fetch a file's decoded text + blob sha (the sha is needed to update it via PUT)."""
@@ -307,7 +370,7 @@ class GitHubClient:
             raise ValueError(f"refusing path traversal in {path!r}")
         params = {"ref": ref} if ref else None
         resp = await self._client.get(
-            f"{self._base}/repos/{owner}/{repo}/contents/{quote(path)}",
+            f"{self._repo(owner, repo)}/contents/{quote(path)}",
             headers=self._headers,
             params=params,
         )
@@ -318,7 +381,7 @@ class GitHubClient:
     async def get_commit_sha(self, owner: str, repo: str, ref: str) -> str:
         """Resolve a tag/branch/ref to its full commit SHA (for pin-to-SHA)."""
         resp = await self._client.get(
-            f"{self._base}/repos/{owner}/{repo}/commits/{quote(ref)}",
+            f"{self._repo(owner, repo)}/commits/{quote(ref)}",
             headers={**self._headers, "Accept": "application/vnd.github.sha"},
         )
         resp.raise_for_status()
@@ -327,7 +390,7 @@ class GitHubClient:
     async def get_ref_sha(self, owner: str, repo: str, branch: str) -> str:
         """SHA the head of a branch points at (base for a new branch)."""
         resp = await self._client.get(
-            f"{self._base}/repos/{owner}/{repo}/git/ref/heads/{quote(branch)}",
+            f"{self._repo(owner, repo)}/git/ref/heads/{quote(branch)}",
             headers=self._headers,
         )
         resp.raise_for_status()
@@ -336,7 +399,7 @@ class GitHubClient:
     async def create_branch(self, owner: str, repo: str, branch: str, base_sha: str) -> None:
         """Create a new branch ref at base_sha."""
         resp = await self._client.post(
-            f"{self._base}/repos/{owner}/{repo}/git/refs",
+            f"{self._repo(owner, repo)}/git/refs",
             headers=self._headers,
             json={"ref": f"refs/heads/{branch}", "sha": base_sha},
         )
@@ -355,7 +418,7 @@ class GitHubClient:
     ) -> None:
         """Commit a file change on a branch (PUT contents; sha = existing blob sha)."""
         resp = await self._client.put(
-            f"{self._base}/repos/{owner}/{repo}/contents/{quote(path)}",
+            f"{self._repo(owner, repo)}/contents/{quote(path)}",
             headers=self._headers,
             json={
                 "message": message,
@@ -371,7 +434,7 @@ class GitHubClient:
     ) -> dict:
         """Open a PR; returns {"number", "html_url"}."""
         resp = await self._client.post(
-            f"{self._base}/repos/{owner}/{repo}/pulls",
+            f"{self._repo(owner, repo)}/pulls",
             headers=self._headers,
             json={"head": head, "base": base, "title": title, "body": body},
         )
@@ -385,7 +448,7 @@ class GitHubClient:
         GitHub returns 201 with an empty body on success; we just surface a non-2xx as an error.
         """
         resp = await self._client.post(
-            f"{self._base}/repos/{owner}/{repo}/actions/runs/{run_id}/rerun",
+            f"{self._repo(owner, repo)}/actions/runs/{run_id}/rerun",
             headers=self._headers,
         )
         resp.raise_for_status()
@@ -407,7 +470,7 @@ class GitHubClient:
         """
         encoded = base64.b64encode(gzip.compress(json.dumps(sarif).encode())).decode()
         resp = await self._client.post(
-            f"{self._base}/repos/{owner}/{repo}/code-scanning/sarifs",
+            f"{self._repo(owner, repo)}/code-scanning/sarifs",
             headers=self._headers,
             json={
                 "commit_sha": commit_sha,

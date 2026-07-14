@@ -8,14 +8,24 @@ rewrite stays a pure function.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import httpx
 
+from actionsplane.audit.parser import parse_workflow
 from actionsplane.audit.pins import classify
-from actionsplane.executor.operations import pin_workflow_to_sha, unified_diff
+from actionsplane.executor.operations import OPERATIONS, unified_diff
 from actionsplane.github.client import GitHubClient
 from actionsplane.models.enums import PinState
+
+log = logging.getLogger(__name__)
+
+# Operations whose full dry-run path (ref resolution + rewrite) is implemented here. The registry
+# in operations.py may list more rewrite callables than have an end-to-end dry-run, so dispatch is
+# guarded rather than assumed (review §4 L-1: a campaign must never silently run pin-shas under
+# another operation's label).
+_DRY_RUN_SUPPORTED = {"pin-shas"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,23 +37,26 @@ class FileEdit:
     changes: list[str]
 
 
-async def _resolve_pin_refs(gh: GitHubClient, text: str) -> dict[tuple[str, str, str], str]:
-    """Resolve every mutable action ref in a workflow to a commit SHA (against the action repo)."""
+async def _resolve_pin_refs(
+    gh: GitHubClient, text: str, path: str
+) -> dict[tuple[str, str, str], str]:
+    """Resolve every mutable action ref in a workflow to a commit SHA (against the action repo).
+
+    Refs come from the parsed AST's ``all_uses()`` (review §4 L-2) — ``jobs.*.uses`` and
+    ``jobs.*.steps[].uses`` only — not a line scan, so a ``uses:`` substring buried in a ``run:``
+    heredoc in an untrusted repo can't steer a ``get_commit_sha`` at an attacker-chosen action.
+    If the file doesn't parse we skip resolution (the caller's pin pass is then a no-op for it).
+    """
     resolved: dict[tuple[str, str, str], str] = {}
-    seen: set[str] = set()
-    # cheap scan: classify each `uses:` line without a full parse
-    for line in text.splitlines():
-        stripped = line.strip().lstrip("- ")
-        if not stripped.startswith("uses:"):
-            continue
-        ref = stripped.split("uses:", 1)[1].strip().strip("'\"")
-        if ref in seen:
-            continue
-        seen.add(ref)
+    try:
+        wf = parse_workflow(text, path)
+    except Exception:
+        log.warning("skipping pin resolution for unparseable workflow %s", path)
+        return resolved
+    for ref in set(wf.all_uses()):
         u = classify(ref)
         if u.pin_state in (PinState.TAG_PINNED, PinState.BRANCH_PINNED) and u.owner and u.repo:
-            sha = await gh.get_commit_sha(u.owner, u.repo, u.ref)
-            resolved[(u.owner, u.repo, u.ref)] = sha
+            resolved[(u.owner, u.repo, u.ref)] = await gh.get_commit_sha(u.owner, u.repo, u.ref)
     return resolved
 
 
@@ -52,24 +65,28 @@ async def dry_run_repo(
     owner: str,
     repo: str,
     *,
+    operation: str = "pin-shas",
     resolved: dict[tuple[str, str, str], str] | None = None,
 ) -> tuple[list[FileEdit], dict[tuple[str, str, str], str]]:
-    """Compute pin-to-SHA edits for every workflow in a repo. No writes.
+    """Compute edits for ``operation`` across every workflow in a repo. No writes.
 
-    On dry-run (``resolved=None``) tags are resolved against the action repos' HEAD and the
-    resolved map is returned. On **apply**, pass the previously-resolved map back in so the SHAs
-    that land are exactly the ones the reviewer saw — a tag retargeted between preview and apply
-    cannot change the result.
+    Dispatches on ``operation`` so a campaign labeled one thing can never silently run another
+    (review §4 L-1). Only ``pin-shas`` has a full dry-run path today; an unimplemented (but
+    registry-known) operation raises rather than falling through to pinning. On dry-run
+    (``resolved=None``) tags are resolved against the action repos' HEAD and the resolved map is
+    returned. On **apply**, pass the previously-resolved map back in so the SHAs that land are
+    exactly the ones the reviewer saw — a tag retargeted between preview and apply cannot change it.
     """
+    if operation not in _DRY_RUN_SUPPORTED:
+        raise NotImplementedError(f"dry-run for operation {operation!r} is not implemented")
+    edit_fn = OPERATIONS[operation]
     accumulated: dict[tuple[str, str, str], str] = dict(resolved or {})
     edits: list[FileEdit] = []
     for path in await gh.list_workflow_files(owner, repo):
         f = await gh.get_file(owner, repo, path)
         if resolved is None:
-            accumulated.update(await _resolve_pin_refs(gh, f["text"]))
-        result = pin_workflow_to_sha(
-            f["text"], lambda o, r, ref, _m=accumulated: _m.get((o, r, ref))
-        )
+            accumulated.update(await _resolve_pin_refs(gh, f["text"], path))
+        result = edit_fn(f["text"], lambda o, r, ref, _m=accumulated: _m.get((o, r, ref)))
         if result.changed:
             edits.append(
                 FileEdit(
@@ -81,6 +98,16 @@ async def dry_run_repo(
                 )
             )
     return edits, accumulated
+
+
+def _md_inline(s: str) -> str:
+    """Neutralize repo-controlled text before it lands in an ActionsPlane-authored PR body (§4 L-3).
+
+    Change strings and paths derive from an untrusted repo's ``uses:`` refs, so a crafted action
+    name could break out of the code span (backticks) or inject list structure (newlines). Collapse
+    both rather than render attacker markdown in our own PR.
+    """
+    return s.replace("`", "'").replace("\r", " ").replace("\n", " ")
 
 
 async def open_pr_for_edits(
@@ -112,7 +139,9 @@ async def open_pr_for_edits(
             branch=branch,
             sha=edit.blob_sha,
         )
-    lines = [f"- `{e.path}`: " + "; ".join(e.changes) for e in edits]
+    lines = [
+        f"- `{_md_inline(e.path)}`: " + "; ".join(_md_inline(c) for c in e.changes) for e in edits
+    ]
     body = rationale + "\n\n" + "\n".join(lines)
     return await gh.create_pull_request(
         owner, repo, head=branch, base=base_branch, title=f"ci: {operation_id}", body=body

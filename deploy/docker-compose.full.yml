@@ -36,8 +36,9 @@ services:
       POSTGRES_USER: actionsplane
       POSTGRES_PASSWORD: actionsplane
       POSTGRES_DB: actionsplane
+    # Bind to loopback only — the dev DB must not be reachable from the LAN (review 4, N6).
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -48,8 +49,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Loopback only — same reasoning as Postgres (review 4, N6).
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

@@ -16,7 +16,7 @@ from sqlalchemy.ext.compiler import compiles
 
 from actionsplane.db.base import Base
 from actionsplane.db.models import WorkflowRun
-from actionsplane.db.repository import upsert_run
+from actionsplane.db.repository import upsert_run, upsert_runs
 from actionsplane.ingestor import events
 
 
@@ -104,3 +104,37 @@ async def test_equal_timestamp_conclusion_correction_applies(session):
     assert await _upsert(session, _run("completed", "success", "2026-06-01T10:05:00Z")) == 1
     row = await session.get(WorkflowRun, 555)
     assert row.conclusion == "success"
+
+
+def _run_id(run_id: int, status: str, updated_at: str) -> dict:
+    r = _run(status, "success" if status == "completed" else None, updated_at)
+    r["id"] = run_id
+    return r
+
+
+async def test_batch_upsert_inserts_all_and_dedups(session):
+    # H4: reconcile batches a repo's runs into one statement. Two distinct ids + a duplicate id
+    # (allowed in a fetched list, but Postgres forbids touching a row twice per ON CONFLICT).
+    rows = [
+        events.normalize_run_object(_run_id(1, "completed", "2026-06-01T10:05:00Z"), repo_id=1),
+        events.normalize_run_object(_run_id(2, "in_progress", "2026-06-01T10:02:00Z"), repo_id=1),
+        events.normalize_run_object(_run_id(1, "completed", "2026-06-01T10:05:00Z"), repo_id=1),
+    ]
+    written = await upsert_runs(session, rows)
+    await session.commit()
+    assert written == 2  # deduped to two rows
+    assert (await session.get(WorkflowRun, 1)).status == "completed"
+    assert (await session.get(WorkflowRun, 2)).status == "in_progress"
+
+
+async def test_batch_upsert_respects_the_ordering_guard(session):
+    # A stale batch (older updated_at) must not regress a fresher stored row.
+    await _upsert(session, _run_id(1, "completed", "2026-06-01T10:05:00Z"))
+    stale = [events.normalize_run_object(_run_id(1, "in_progress", "2026-06-01T10:02:00Z"), 1)]
+    assert await upsert_runs(session, stale) == 0  # guard blocked the regression
+    await session.commit()
+    assert (await session.get(WorkflowRun, 1)).status == "completed"
+
+
+async def test_batch_upsert_empty_is_noop(session):
+    assert await upsert_runs(session, []) == 0

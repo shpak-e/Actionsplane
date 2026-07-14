@@ -84,7 +84,11 @@ class WorkflowRun(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     run_attempt: Mapped[int] = mapped_column(BigInteger, default=1)
-    raw_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Deferred (review §5 H1): the raw webhook JSONB is written on every event but never read back
+    # through the ORM — nulling it in retention and pruning uses SQL predicates, not attribute
+    # access. Deferring keeps it off every ``SELECT`` of a run, which otherwise dragged MBs of dead
+    # payload into hot list/metrics queries. No run query undefers it (nothing reads it).
+    raw_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True, deferred=True)
 
 
 class AuditFinding(Base):
@@ -120,7 +124,10 @@ class WorkflowJob(Base):
     runner_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     runner_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
     labels: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    raw_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Deferred (review §5 H1). The job step list lives in here, so the two queries that feed the
+    # failing-step / step-tree UI (``list_jobs``, ``list_failing_jobs``) explicitly ``undefer`` it;
+    # every other job query skips the heavy JSONB.
+    raw_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True, deferred=True)
 
 
 class WorkflowTemplate(Base):

@@ -72,6 +72,11 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Dependency CVE scan (npm audit, non-blocking)
+        # Surfaces known-vulnerable frontend deps at high+ severity. Non-blocking (|| true) like the
+        # backend pip-audit — informational until we decide to gate on it (review §4 / 5.0.7).
+        run: npm audit --audit-level=high || true
+
   migrations:
     name: migrations
     runs-on: ubuntu-24.04

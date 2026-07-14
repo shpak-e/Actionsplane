@@ -1,13 +1,14 @@
-"""Tests for the live event-bus envelope builder (pure) + subscription cleanup."""
+"""Tests for the event-bus envelope builder (pure) + the fan-out hub (review §5 M6 / §4 L-5)."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import pytest
 
 from actionsplane.events import build_envelope
-from actionsplane.events.bus import CHANNEL, subscribe
+from actionsplane.events.bus import CHANNEL, EventHub, SubscriberLimit
 
 
 def test_build_envelope_slims_payload():
@@ -46,6 +47,7 @@ class _FakePubSub:
         self.subscribed: list[str] = []
         self.unsubscribed: list[str] = []
         self.closed = False
+        self._queue: asyncio.Queue = asyncio.Queue()
 
     async def subscribe(self, channel: str) -> None:
         self.subscribed.append(channel)
@@ -56,10 +58,13 @@ class _FakePubSub:
     async def aclose(self) -> None:
         self.closed = True
 
+    def emit(self, data: bytes) -> None:
+        self._queue.put_nowait({"type": "message", "data": data})
+
     async def listen(self):
         yield {"type": "subscribe"}
-        yield {"type": "message", "data": b'{"kind":"run"}'}
-        await asyncio.Event().wait()  # idle channel: block forever, like a live connection
+        while True:
+            yield await self._queue.get()
 
 
 class _FakeConn:
@@ -74,17 +79,49 @@ class _FakeConn:
         self.closed = True
 
 
+async def _next(stream):
+    return await asyncio.wait_for(stream.__anext__(), timeout=1.0)
+
+
 @pytest.mark.asyncio
-async def test_subscribe_cleans_up_when_consumer_closes():
-    """Closing the generator (what a client disconnect does) must unsubscribe + close pubsub."""
+async def test_hub_fans_one_message_out_to_all_subscribers():
+    """M6: one Redis reader, many clients — a single publish reaches every subscriber's queue."""
     ps = _FakePubSub()
     conn = _FakeConn(ps)
-    stream = subscribe(conn=conn)
+    hub = EventHub(conn_factory=lambda: conn)
 
-    # the control "subscribe" frame is skipped; the first real message is relayed
-    assert await stream.__anext__() == '{"kind":"run"}'
-    await stream.aclose()  # simulate the SSE generator being closed on disconnect
+    a = hub.subscribe()
+    b = hub.subscribe()
+    # prime both generators so their queues are registered before we emit
+    task_a = asyncio.ensure_future(_next(a))
+    task_b = asyncio.ensure_future(_next(b))
+    await asyncio.sleep(0)  # let both register + the reader start
+    ps.emit(b'{"kind":"run"}')
 
-    assert ps.unsubscribed == [CHANNEL]  # finally ran
-    assert ps.closed is True
-    assert conn.closed is False  # injected (not owned) connection is left for the caller to manage
+    assert await task_a == '{"kind":"run"}'
+    assert await task_b == '{"kind":"run"}'
+    assert ps.subscribed == [CHANNEL]  # ONE subscription shared across both clients
+
+    await a.aclose()
+    assert conn.closed is False  # one client left → reader still running
+    await b.aclose()
+    assert ps.unsubscribed == [CHANNEL] and conn.closed is True  # last client → reader torn down
+
+
+@pytest.mark.asyncio
+async def test_hub_enforces_subscriber_cap():
+    """L-5: past the cap, a new subscriber is refused rather than allocating another queue."""
+    ps = _FakePubSub()
+    hub = EventHub(conn_factory=lambda: _FakeConn(ps), max_subscribers=1)
+
+    first = hub.subscribe()
+    task = asyncio.ensure_future(_next(first))
+    await asyncio.sleep(0)  # register the first subscriber
+
+    with pytest.raises(SubscriberLimit):
+        await hub.subscribe().__anext__()
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task  # let the cancel settle before closing the generator
+    await first.aclose()

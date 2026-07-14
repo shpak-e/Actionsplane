@@ -12,9 +12,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "sse-starlette>=2.1",
-    # GitHub
-    "PyGithub>=2.5",
-    "httpx>=0.28",            # GraphQL + raw REST where PyGithub is awkward
+    # GitHub — hand-rolled httpx client (github/client.py); no PyGithub (needs REST+GraphQL,
+    # conditional requests, per-page ETag caching, and streaming SARIF upload it doesn't cover).
+    "httpx>=0.28",
     # Workflow AST (round-trip preserves comments/formatting)
     "ruamel.yaml>=0.18",
     "pydantic>=2.10",

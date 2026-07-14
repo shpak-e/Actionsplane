@@ -8,13 +8,28 @@ them to response models.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, NamedTuple
 
-from sqlalchemy import and_, case, delete, func, null, or_, select, update
+from sqlalchemy import (
+    Integer,
+    and_,
+    case,
+    column,
+    delete,
+    func,
+    null,
+    or_,
+    select,
+    true,
+    update,
+    values,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from actionsplane.db.models import (
     AuditFinding,
@@ -32,6 +47,17 @@ from actionsplane.db.models import (
     WorkflowTemplate,
     WriteAuditLog,
 )
+
+# Postgres caps a statement at 65,535 bind parameters; an ``IN (...)`` over a whole fleet's worth
+# of ids can approach that. Chunk id lists well under the ceiling and union the results in Python
+# (review 4, NEW-4). 900 leaves ample headroom for the query's other params on either dialect.
+_IN_CHUNK = 900
+
+
+def _in_chunks(ids: Sequence[int], size: int = _IN_CHUNK) -> Iterator[list[int]]:
+    """Yield ``ids`` in chunks small enough to stay under the DB's bind-parameter ceiling."""
+    for i in range(0, len(ids), size):
+        yield list(ids[i : i + size])
 
 
 def _conflict_insert(session: AsyncSession):
@@ -60,37 +86,62 @@ async def upsert_repo(
     await _upsert(session, Repo, {**values, "installation_id": installation_id})
 
 
+def _run_upsert_where(stmt):
+    """The strict ordering guard shared by the single- and batch-run upserts (review 3, 4a).
+
+    Apply the update only when the incoming event is strictly newer, or exactly as new **and**
+    actually changes ``status``/``conclusion`` (an equal-timestamp conclusion correction — the same
+    nuance as the job gate). An identical redelivery matches nothing and writes 0 rows, so an idle
+    repo churns no rows and dirties no indexes. Legacy rows (``updated_at IS NULL``) still update.
+    """
+    return or_(
+        WorkflowRun.updated_at.is_(None),
+        WorkflowRun.updated_at < stmt.excluded["updated_at"],  # strictly newer → apply
+        and_(  # same timestamp, but a real status/conclusion change (correction) → apply
+            WorkflowRun.updated_at == stmt.excluded["updated_at"],
+            or_(
+                WorkflowRun.status.is_distinct_from(stmt.excluded["status"]),
+                WorkflowRun.conclusion.is_distinct_from(stmt.excluded["conclusion"]),
+            ),
+        ),
+    )
+
+
 async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> int:
     """Upsert a run, never letting a stale event overwrite a fresher row. Returns rows written.
 
     GitHub delivers ``workflow_run`` events at-least-once and out of order, so a late
     ``in_progress`` redelivery can arrive *after* the ``completed`` event for the same run id.
     An unconditional upsert would regress the row from completed back to in-progress. The run's
-    ``updated_at`` (monotonic across GitHub state transitions) gates the update.
-
-    The guard is *strict* (review 3, 4a): it applies only when the incoming event is strictly
-    newer, or exactly as new **and** actually changes ``status``/``conclusion`` (an equal-timestamp
-    conclusion correction — the same nuance as the job gate). An identical redelivery — the common
-    case for a reconcile sweep replaying already-seen runs — matches nothing and writes 0 rows, so
-    an idle repo churns no rows and dirties no indexes. Legacy rows (``updated_at IS NULL``) still
-    take the update. Staying in SQL keeps the check-and-write atomic under concurrency.
+    ``updated_at`` (monotonic across GitHub state transitions) gates the update — see
+    ``_run_upsert_where``. Staying in SQL keeps the check-and-write atomic under concurrency.
     """
     stmt = _conflict_insert(session)(WorkflowRun).values(**values)
     update_cols = {c: stmt.excluded[c] for c in values if c != "id"}
     stmt = stmt.on_conflict_do_update(
-        index_elements=["id"],
-        set_=update_cols,
-        where=or_(
-            WorkflowRun.updated_at.is_(None),
-            WorkflowRun.updated_at < stmt.excluded["updated_at"],  # strictly newer → apply
-            and_(  # same timestamp, but a real status/conclusion change (correction) → apply
-                WorkflowRun.updated_at == stmt.excluded["updated_at"],
-                or_(
-                    WorkflowRun.status.is_distinct_from(stmt.excluded["status"]),
-                    WorkflowRun.conclusion.is_distinct_from(stmt.excluded["conclusion"]),
-                ),
-            ),
-        ),
+        index_elements=["id"], set_=update_cols, where=_run_upsert_where(stmt)
+    )
+    result = await session.execute(stmt)
+    return result.rowcount
+
+
+async def upsert_runs(session: AsyncSession, rows: list[dict[str, Any]]) -> int:
+    """Batch-upsert many runs in ONE statement, same strict guard as ``upsert_run`` (review §5 H4).
+
+    Reconcile replays every recent run for every repo each tick; a per-run statement is up to ~50k
+    no-op statements (the guard writes 0 rows for unchanged runs, but the round trips still cost).
+    A single multi-VALUES ``INSERT ... ON CONFLICT DO UPDATE ... WHERE`` collapses a repo's runs to
+    one statement. Rows are de-duplicated by id first — Postgres refuses to let one ``ON CONFLICT``
+    statement touch the same row twice. All rows must share the same columns (the caller ensures it,
+    e.g. by dropping ``raw_payload`` uniformly). Returns rows actually written.
+    """
+    if not rows:
+        return 0
+    deduped = list({r["id"]: r for r in rows}.values())  # last snapshot of a repeated id wins
+    stmt = _conflict_insert(session)(WorkflowRun).values(deduped)
+    update_cols = {c: stmt.excluded[c] for c in deduped[0] if c != "id"}
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["id"], set_=update_cols, where=_run_upsert_where(stmt)
     )
     result = await session.execute(stmt)
     return result.rowcount
@@ -139,7 +190,12 @@ async def upsert_job(session: AsyncSession, values: dict[str, Any]) -> None:
 
 
 async def list_jobs(session: AsyncSession, *, run_id: int) -> list[WorkflowJob]:
-    stmt = select(WorkflowJob).where(WorkflowJob.run_id == run_id)
+    # undefer raw_payload: the API serializes the step list out of it (deferred by default, H1).
+    stmt = (
+        select(WorkflowJob)
+        .where(WorkflowJob.run_id == run_id)
+        .options(undefer(WorkflowJob.raw_payload))
+    )
     return list((await session.scalars(stmt)).all())
 
 
@@ -160,43 +216,68 @@ class LatestRun(NamedTuple):
     run_number: int
 
 
+_LATEST_RUN_COLS = (
+    WorkflowRun.id,
+    WorkflowRun.workflow_id,
+    WorkflowRun.status,
+    WorkflowRun.conclusion,
+    WorkflowRun.run_number,
+)
+
+
+def _latest_runs_stmt(dialect: str, chunk: list[int]):
+    """Build the newest-run-per-workflow query for one id chunk, dialect-appropriately (§5 H2).
+
+    Postgres: a ``JOIN LATERAL (… ORDER BY created_at DESC LIMIT 1)`` fetches exactly ONE row per
+    workflow via the ``(workflow_id, created_at DESC)`` index — O(workflows), not O(history), so it
+    doesn't degrade as run history grows. sqlite (tests) has no LATERAL, so it falls back to the
+    portable ``ROW_NUMBER()`` window; correctness is identical, only the row-read cost differs, and
+    the hermetic suite exercises the same result shape.
+    """
+    if dialect == "postgresql":
+        w = values(column("workflow_id", Integer), name="w").data([(i,) for i in chunk])
+        newest = (
+            select(*_LATEST_RUN_COLS)
+            .where(WorkflowRun.workflow_id == w.c.workflow_id)
+            .order_by(WorkflowRun.created_at.desc(), WorkflowRun.id.desc())  # id breaks ties
+            .limit(1)
+            .lateral("lr")
+        )
+        return select(
+            newest.c.id,
+            newest.c.workflow_id,
+            newest.c.status,
+            newest.c.conclusion,
+            newest.c.run_number,
+        ).select_from(w.join(newest, true()))
+    rn = func.row_number().over(
+        partition_by=WorkflowRun.workflow_id,
+        order_by=(WorkflowRun.created_at.desc(), WorkflowRun.id.desc()),
+    )
+    ranked = select(*_LATEST_RUN_COLS, rn.label("rn")).where(WorkflowRun.workflow_id.in_(chunk))
+    ranked = ranked.subquery()
+    return select(
+        ranked.c.id, ranked.c.workflow_id, ranked.c.status, ranked.c.conclusion, ranked.c.run_number
+    ).where(ranked.c.rn == 1)
+
+
 async def latest_runs_for(session: AsyncSession, workflow_ids: list[int]) -> dict[int, LatestRun]:
     """The most recent run per workflow id (by ``created_at``), for the given workflow ids.
 
-    One indexed query regardless of history size: a ``ROW_NUMBER() OVER (PARTITION BY workflow_id
-    ORDER BY created_at DESC)`` window keeps just the newest row per workflow, instead of streaming
-    every run for those workflows into Python. Only the status columns are selected — never
-    ``raw_payload``. The window form is dialect-portable (PG + sqlite ≥ 3.25). Returns
-    ``{workflow_id: LatestRun}``.
+    O(workflows) on Postgres via a lateral top-1 join; a portable window fallback on sqlite (see
+    ``_latest_runs_stmt``). Only the status columns are selected — never ``raw_payload``. The id
+    list is chunked under the bind-param ceiling (NEW-4), so a small fleet is still one query.
+    Returns ``{workflow_id: LatestRun}``.
     """
-    if not workflow_ids:
-        return {}
-    rn = func.row_number().over(
-        partition_by=WorkflowRun.workflow_id,
-        order_by=(WorkflowRun.created_at.desc(), WorkflowRun.id.desc()),  # id breaks created ties
-    )
-    ranked = (
-        select(
-            WorkflowRun.id,
-            WorkflowRun.workflow_id,
-            WorkflowRun.status,
-            WorkflowRun.conclusion,
-            WorkflowRun.run_number,
-            rn.label("rn"),
-        )
-        .where(WorkflowRun.workflow_id.in_(workflow_ids))
-        .subquery()
-    )
-    stmt = select(
-        ranked.c.id, ranked.c.workflow_id, ranked.c.status, ranked.c.conclusion, ranked.c.run_number
-    ).where(ranked.c.rn == 1)
-    rows = (await session.execute(stmt)).all()
-    return {
-        row.workflow_id: LatestRun(
-            row.id, row.workflow_id, row.status, row.conclusion, row.run_number
-        )
-        for row in rows
-    }
+    out: dict[int, LatestRun] = {}
+    dialect = session.bind.dialect.name
+    for chunk in _in_chunks(workflow_ids):
+        stmt = _latest_runs_stmt(dialect, chunk)
+        for row in (await session.execute(stmt)).all():
+            out[row.workflow_id] = LatestRun(
+                row.id, row.workflow_id, row.status, row.conclusion, row.run_number
+            )
+    return out
 
 
 async def list_failing_jobs(session: AsyncSession, run_ids: list[int]) -> list[WorkflowJob]:
@@ -204,16 +285,20 @@ async def list_failing_jobs(session: AsyncSession, run_ids: list[int]) -> list[W
 
     Replaces the per-run job fetch behind the Pipelines "which step failed?" annotation: the caller
     groups by ``run_id`` and takes the first failing job per run. ``raw_payload`` is loaded (the
-    step list lives there) but only for *failed* jobs of *failed* runs, so it stays bounded.
+    step list lives there) but only for *failed* jobs of *failed* runs, so it stays bounded. The
+    run-id list is chunked under the bind-param ceiling (NEW-4).
     """
-    if not run_ids:
-        return []
-    stmt = (
-        select(WorkflowJob)
-        .where(WorkflowJob.run_id.in_(run_ids), WorkflowJob.conclusion == "failure")
-        .order_by(WorkflowJob.run_id, WorkflowJob.id)
-    )
-    return list((await session.scalars(stmt)).all())
+    out: list[WorkflowJob] = []
+    for chunk in _in_chunks(run_ids):
+        stmt = (
+            select(WorkflowJob)
+            .where(WorkflowJob.run_id.in_(chunk), WorkflowJob.conclusion == "failure")
+            .order_by(WorkflowJob.run_id, WorkflowJob.id)
+            # undefer raw_payload: _failing_steps_for reads the step list out of it (H1).
+            .options(undefer(WorkflowJob.raw_payload))
+        )
+        out.extend((await session.scalars(stmt)).all())
+    return out
 
 
 async def get_repo(session: AsyncSession, repo_id: int) -> Repo | None:
@@ -252,6 +337,46 @@ async def list_runs(
         stmt = stmt.where(WorkflowRun.status == status)
     stmt = stmt.order_by(WorkflowRun.created_at.desc()).limit(limit)
     return list((await session.scalars(stmt)).all())
+
+
+async def metrics_records(
+    session: AsyncSession, *, workflow_id: int, limit: int
+) -> list[dict[str, Any]]:
+    """The lightweight run records the metrics functions need — projected in SQL, newest first.
+
+    ``get_workflow_metrics`` only reads conclusion / head_sha / duration / queue time, so selecting
+    those five columns (deriving the two durations here) avoids hydrating full ORM rows — and, at
+    the metrics limit of up to 2000 runs, avoids dragging the heavy ``raw_payload`` JSONB across the
+    wire for every one (review 3, P1.1). The pure ``summarize_runs`` still owns the maths.
+    """
+    stmt = (
+        select(
+            WorkflowRun.conclusion,
+            WorkflowRun.head_sha,
+            WorkflowRun.created_at,
+            WorkflowRun.started_at,
+            WorkflowRun.completed_at,
+        )
+        .where(WorkflowRun.workflow_id == workflow_id)
+        .order_by(WorkflowRun.created_at.desc())
+        .limit(limit)
+    )
+    records: list[dict[str, Any]] = []
+    for row in (await session.execute(stmt)).all():
+        duration_s = queue_s = None
+        if row.started_at and row.completed_at:
+            duration_s = (row.completed_at - row.started_at).total_seconds()
+        if row.created_at and row.started_at:
+            queue_s = (row.started_at - row.created_at).total_seconds()
+        records.append(
+            {
+                "conclusion": row.conclusion,
+                "head_sha": row.head_sha,
+                "duration_s": duration_s,
+                "queue_s": queue_s,
+            }
+        )
+    return records
 
 
 def _open_findings_filter(stmt, *, repo_id, severity, finding_type):

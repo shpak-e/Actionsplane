@@ -56,6 +56,11 @@ postgres:
 redis:
   enabled: true
   image: redis:7-alpine
+  # Require a password (review §4 H-1). The bundled Redis runs with --requirepass and the app
+  # injects the same secret into its Redis URL. Keep true unless you front Redis with your own
+  # authenticated/managed instance. The password lives in `secrets.existingSecret` under key
+  # ACTIONSPLANE_REDIS_PASSWORD.
+  auth: true
 
 # Run the Alembic migration as a pre-install/pre-upgrade hook.
 migrate:
@@ -68,3 +73,20 @@ ingress:
   annotations:
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # Assumes a cert-manager ClusterIssuer; change to match your setup (or disable tls below and
+    # point secretName at a pre-provisioned cert).
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  # TLS on by default (review §4 M-2): the webhook secret + operate bearer token must not traverse
+  # plaintext. secretName is where the cert lives (cert-manager fills it, or provide it yourself).
+  tls:
+    enabled: true
+    secretName: actionsplane-tls
+
+# Default-deny + least-privilege NetworkPolicies (review §4 H-1 / N2). ON by default: this service
+# holds a GitHub App key and its HMAC boundary depends on network isolation, so the secure posture
+# ships as the default. On a CNI that doesn't enforce NetworkPolicy these are silent no-ops (still
+# safe); set false only if your platform manages egress/isolation another way. See
+# templates/networkpolicy.yaml.
+networkPolicy:
+  enabled: true

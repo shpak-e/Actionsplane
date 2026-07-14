@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -43,7 +46,6 @@ from actionsplane.audit.sarif_service import upload_sarif_for_repo
 from actionsplane.audit.scorecard import build_scorecard
 from actionsplane.config import get_settings
 from actionsplane.db.base import get_session, get_sessionmaker
-from actionsplane.db.models import WorkflowRun
 from actionsplane.db.repository import (
     count_open_findings,
     count_open_findings_grouped,
@@ -62,13 +64,16 @@ from actionsplane.db.repository import (
     list_workflow_relations,
     list_workflows,
     list_write_audit,
+    metrics_records,
     open_findings,
     record_write_audit,
     upsert_template,
 )
 from actionsplane.events import subscribe
+from actionsplane.events.bus import SubscriberLimit
 from actionsplane.executor.actions import rerun_run
 from actionsplane.executor.campaigns import apply_campaign, run_dry_run
+from actionsplane.executor.operations import OPERATIONS
 from actionsplane.metrics import summarize_runs
 from actionsplane.observability import instrument_fastapi, setup_tracing
 from actionsplane.offline import last_sync, sync_offline
@@ -102,6 +107,25 @@ async def lifespan(_app: FastAPI):
 setup_tracing("actionsplane-api")
 app = FastAPI(title="ActionsPlane API", version=__version__, lifespan=lifespan)
 instrument_fastapi(app)
+
+# gzip JSON responses over ~1 KiB (the run grid / findings lists compress well). Streaming
+# responses (the SSE event stream) set no Content-Length, so GZipMiddleware leaves them untouched
+# — no need to special-case the route, but that's why the buffering-sensitive stream is unaffected.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# CORS only when origins are explicitly configured. Default: no middleware → same-origin only,
+# which is the safe posture for a deployment that may run token-open (review 4). Credentials are
+# left off deliberately — the API authenticates via a bearer token the UI attaches, not cookies.
+_cors_origins = get_settings().cors_origin_list
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+        allow_credentials=False,
+    )
+
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_token)])
 
 
@@ -240,24 +264,8 @@ async def get_workflow_metrics(
     limit: int = Query(500, le=2000),
     session: AsyncSession = Depends(get_session),
 ) -> MetricsOut:
-    runs = await list_runs(session, workflow_id=workflow_id, limit=limit)
-    records = [run_to_record(r) for r in runs]
+    records = await metrics_records(session, workflow_id=workflow_id, limit=limit)
     return MetricsOut(**asdict(summarize_runs(records)))
-
-
-def run_to_record(run: WorkflowRun) -> dict:
-    """Derive duration/queue seconds from a run row for the metrics functions."""
-    duration_s = queue_s = None
-    if run.started_at and run.completed_at:
-        duration_s = (run.completed_at - run.started_at).total_seconds()
-    if run.created_at and run.started_at:
-        queue_s = (run.started_at - run.created_at).total_seconds()
-    return {
-        "conclusion": run.conclusion,
-        "head_sha": run.head_sha,
-        "duration_s": duration_s,
-        "queue_s": queue_s,
-    }
 
 
 @router.get("/findings", response_model=FindingsPage)
@@ -341,10 +349,35 @@ async def _failing_steps_for(
     return out
 
 
+# Single-flight TTL cache for the fleet pipeline graph (review §5 M5). One rebuild per TTL window,
+# shared across concurrent viewers; the lock collapses a thundering herd on expiry to one rebuild.
+_pipelines_cache: dict[str, object] = {"at": 0.0, "value": None}
+_pipelines_lock = asyncio.Lock()
+
+
 @router.get("/pipelines", response_model=PipelineGraphOut)
 async def get_pipelines(session: AsyncSession = Depends(get_session)) -> PipelineGraphOut:
-    """The fleet-wide cross-workflow trigger/dependency graph, each node annotated with the
-    status of its latest run (and, when failed, the job/step that failed)."""
+    """The fleet-wide cross-workflow trigger/dependency graph, each node annotated with its
+    latest-run status (and, when failed, the job/step that failed). Cached for a short TTL."""
+    ttl = get_settings().pipelines_cache_ttl_seconds
+    now = time.monotonic()
+    cached = _pipelines_cache["value"]
+    if ttl > 0 and cached is not None and now - float(_pipelines_cache["at"]) < ttl:
+        return cached  # type: ignore[return-value]
+    async with _pipelines_lock:
+        # Re-check inside the lock: a concurrent request may have just rebuilt it.
+        now = time.monotonic()
+        cached = _pipelines_cache["value"]
+        if ttl > 0 and cached is not None and now - float(_pipelines_cache["at"]) < ttl:
+            return cached  # type: ignore[return-value]
+        graph = await _build_pipelines(session)
+        if ttl > 0:
+            _pipelines_cache["value"] = graph
+            _pipelines_cache["at"] = time.monotonic()
+        return graph
+
+
+async def _build_pipelines(session: AsyncSession) -> PipelineGraphOut:
     relations = await list_workflow_relations(session)
     repos = {r.id: r for r in await list_repos(session, watched_only=False)}
 
@@ -472,6 +505,8 @@ async def create_campaign_endpoint(
     actor: str = Depends(require_configured_operate),
 ) -> CampaignOut:
     """Create a bulk-edit campaign and immediately compute its dry-run diffs (no writes)."""
+    if body.operation not in OPERATIONS:
+        raise HTTPException(422, f"unknown operation {body.operation!r}")
     campaign = await create_campaign(
         session,
         name=body.name,
@@ -560,6 +595,9 @@ async def events_stream(request: Request) -> EventSourceResponse:
                 if await request.is_disconnected():
                     break
                 yield {"event": "update", "data": envelope}
+        except SubscriberLimit:
+            # Cap reached (the generator raises on first pull) — refuse this stream cleanly.
+            log.warning("SSE subscriber cap reached; refusing new stream")
         finally:
             await stream.aclose()
 
