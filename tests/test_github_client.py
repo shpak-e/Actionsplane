@@ -270,6 +270,28 @@ async def test_get_file_text_rejects_oversized_file():
 
 
 @pytest.mark.asyncio
+async def test_get_file_rejects_oversized_file():
+    """get_file (the executor's read path) enforces the same decoded-size cap as get_file_text."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"content": "", "sha": "b1", "size": 5_000_000})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
+        with pytest.raises(ValueError, match="cap"):
+            await gh.get_file("acme", "infra", ".github/workflows/huge.yml")
+
+
+@pytest.mark.asyncio
+async def test_get_file_rejects_traversal():
+    transport = httpx.MockTransport(lambda r: httpx.Response(200, json={"content": ""}))
+    async with httpx.AsyncClient(transport=transport) as client:
+        gh = GitHubClient("tok", client=client, api_url="https://api.github.com")
+        with pytest.raises(ValueError):
+            await gh.get_file("acme", "infra", "../../etc/passwd")
+
+
+@pytest.mark.asyncio
 async def test_write_flow_methods():
     """Exercise the write path: resolve sha, get ref, create branch, put file, open PR."""
     calls = []

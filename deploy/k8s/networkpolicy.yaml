@@ -79,6 +79,11 @@ spec:
     matchLabels: { app: actionsplane-api }
   policyTypes: [Ingress, Egress]
   ingress:
+    # Port-scoped but peer-permissive on purpose: raw manifests can't know where your ingress
+    # controller runs. To tighten, add a `from:` with your controller's namespace, e.g.
+    #   from:
+    #     - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: ingress-nginx } }
+    #     - podSelector: { matchLabels: { app: actionsplane-frontend } }  # nginx proxies /api+SSE
     - ports:
         - { protocol: TCP, port: 8000 }
   egress:
@@ -107,6 +112,8 @@ spec:
     matchLabels: { app: actionsplane-ingestor }
   policyTypes: [Ingress, Egress]
   ingress:
+    # Peer-permissive default — same reasoning as the api policy above; add a namespaceSelector
+    # `from:` for your ingress controller's namespace to tighten.
     - ports:
         - { protocol: TCP, port: 8001 }
   egress:

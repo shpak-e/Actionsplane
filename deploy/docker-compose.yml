@@ -20,6 +20,13 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Require auth even in dev (review 4, H-1) — an open Redis lets anything on the host enqueue
+    # arq jobs / forge SSE envelopes. Override with REDIS_PASSWORD in your shell or .env; keep
+    # ACTIONSPLANE_REDIS_URL in your .env in sync: redis://:<password>@localhost:6379/0
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-actionsplane}"]
+    environment:
+      # Lets the healthcheck's redis-cli authenticate without putting the password on the cmdline.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-actionsplane}
     # Loopback only (review 4, N6).
     ports:
       - "127.0.0.1:6379:6379"

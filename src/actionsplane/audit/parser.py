@@ -56,7 +56,13 @@ def _build_job(job_id: str, raw: dict[str, Any]) -> Job:
 
 def parse_workflow(text: str, path: str) -> Workflow:
     """Parse workflow YAML text into a typed ``Workflow``. Raises on non-mapping documents."""
-    data = _yaml.load(io.StringIO(text))
+    try:
+        data = _yaml.load(io.StringIO(text))
+    except RecursionError as exc:
+        # Pathologically nested YAML (hostile input) blows the interpreter stack inside ruamel.
+        # Convert to the parser's normal failure mode (ValueError) so callers' existing
+        # skip-unparseable-file handling applies instead of a stack-exhaustion crash (review §4).
+        raise ValueError(f"{path}: workflow nesting exceeds parser limits") from exc
     if not isinstance(data, dict):
         raise ValueError(f"{path}: workflow root is not a mapping")
     jobs_raw = data.get("jobs") or {}

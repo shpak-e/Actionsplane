@@ -376,7 +376,16 @@ class GitHubClient:
         )
         resp.raise_for_status()
         data = resp.json()
-        return {"text": base64.b64decode(data["content"]).decode("utf-8"), "sha": data["sha"]}
+        if not isinstance(data, dict) or "content" not in data:
+            raise ValueError(f"unexpected contents payload for {path!r}")
+        # Same decoded-size ceiling as get_file_text: reject an oversized (hostile/wrong) file
+        # before it is decoded into memory and fed to the rewriter (review §4).
+        if isinstance(data.get("size"), int) and data["size"] > _MAX_FILE_BYTES:
+            raise ValueError(f"file {path!r} is {data['size']} bytes (> {_MAX_FILE_BYTES} cap)")
+        decoded = base64.b64decode(data["content"])
+        if len(decoded) > _MAX_FILE_BYTES:  # defensive: trust the bytes, not the reported size
+            raise ValueError(f"file {path!r} decoded to {len(decoded)} bytes (> cap)")
+        return {"text": decoded.decode("utf-8"), "sha": data["sha"]}
 
     async def get_commit_sha(self, owner: str, repo: str, ref: str) -> str:
         """Resolve a tag/branch/ref to its full commit SHA (for pin-to-SHA)."""
