@@ -49,8 +49,14 @@ jobs:
         env:
           OWNER: ${{ github.repository_owner }}
 
+      # cache-image/cache-binary off (zizmor cache-poisoning): both default to caching via the
+      # shared GHA cache, which is a poisoning vector in a workflow that publishes images.
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+        with:
+          cache-image: false
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+        with:
+          cache-binary: false
 
       - name: Log in to GHCR
         uses: docker/login-action@06fb636fac595d6fb4b28a5dfcb21a6f5091859c # v4
