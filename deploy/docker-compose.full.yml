@@ -15,7 +15,9 @@
 
 x-app-env: &app-env
   ACTIONSPLANE_DATABASE_URL: postgresql+asyncpg://actionsplane:actionsplane@postgres:5432/actionsplane
-  ACTIONSPLANE_REDIS_URL: redis://redis:6379/0
+  # Redis requires auth (review 4, H-1) — password in the URL, `redis://:<password>@host` form.
+  # Override with REDIS_PASSWORD in your shell/.env; must match the redis service below.
+  ACTIONSPLANE_REDIS_URL: redis://:${REDIS_PASSWORD:-actionsplane}@redis:6379/0
   # --- optional: set these to connect a real GitHub App ---
   # ACTIONSPLANE_GITHUB_APP_ID: "123456"
   # ACTIONSPLANE_GITHUB_APP_PRIVATE_KEY_PATH: /secrets/app.pem
@@ -49,6 +51,12 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Require auth (review 4, H-1): an open Redis lets anything that can reach the port enqueue
+    # arq jobs (bypassing the webhook HMAC boundary) and forge SSE envelopes.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-actionsplane}"]
+    environment:
+      # Lets the healthcheck's redis-cli authenticate without putting the password on the cmdline.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-actionsplane}
     # Loopback only — same reasoning as Postgres (review 4, N6).
     ports:
       - "127.0.0.1:6379:6379"

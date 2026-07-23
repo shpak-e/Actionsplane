@@ -1,6 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
 {{- $inst := .Release.Name }}
 {{- $labels := include "actionsplane.labels" . }}
+{{- $ingressNs := .Values.networkPolicy.ingressControllerNamespaceSelector }}
 # Default-deny + least-privilege NetworkPolicies (review 3/4, N2). Opt-in via networkPolicy.enabled
 # because they only do anything on a policy-enforcing CNI (Calico/Cilium/…) and a mismatched CNI
 # should not surprise an operator. Primary goal: EGRESS control — api/worker are the only pods
@@ -76,8 +77,22 @@ spec:
     matchLabels: { app.kubernetes.io/component: api, app.kubernetes.io/instance: {{ $inst }} }
   policyTypes: [Ingress, Egress]
   ingress:
+    {{- if $ingressNs }}
+    # Scoped: only the ingress controller's namespace plus the in-release frontend (its nginx
+    # proxies /api + SSE to us) may reach :8000.
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $ingressNs | nindent 14 }}
+        - podSelector: { matchLabels: { app.kubernetes.io/component: frontend, app.kubernetes.io/instance: {{ $inst }} } }
+      ports:
+        - { protocol: TCP, port: 8000 }
+    {{- else }}
+    # Permissive default (port-scoped, any peer): the chart can't guess where your ingress
+    # controller runs, and a wrong guess would silently drop traffic. Set
+    # networkPolicy.ingressControllerNamespaceSelector to tighten this to the controller namespace.
     - ports:
         - { protocol: TCP, port: 8000 }
+    {{- end }}
   egress:
     - to:
         - podSelector: { matchLabels: { app.kubernetes.io/component: postgres, app.kubernetes.io/instance: {{ $inst }} } }
@@ -101,8 +116,18 @@ spec:
     matchLabels: { app.kubernetes.io/component: ingestor, app.kubernetes.io/instance: {{ $inst }} }
   policyTypes: [Ingress, Egress]
   ingress:
+    {{- if $ingressNs }}
+    # Scoped: webhooks arrive only via the ingress controller.
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $ingressNs | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 8001 }
+    {{- else }}
+    # Permissive default (port-scoped, any peer) — see the api policy comment.
     - ports:
         - { protocol: TCP, port: 8001 }
+    {{- end }}
   egress:
     - to:
         - podSelector: { matchLabels: { app.kubernetes.io/component: postgres, app.kubernetes.io/instance: {{ $inst }} } }
@@ -161,8 +186,18 @@ spec:
     matchLabels: { app.kubernetes.io/component: frontend, app.kubernetes.io/instance: {{ $inst }} }
   policyTypes: [Ingress, Egress]
   ingress:
+    {{- if $ingressNs }}
+    # Scoped: the SPA is served only via the ingress controller.
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml $ingressNs | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 80 }
+    {{- else }}
+    # Permissive default (port-scoped, any peer) — see the api policy comment.
     - ports:
         - { protocol: TCP, port: 80 }
+    {{- end }}
   egress:
     - to:
         - podSelector: { matchLabels: { app.kubernetes.io/component: api, app.kubernetes.io/instance: {{ $inst }} } }

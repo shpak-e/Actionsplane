@@ -90,3 +90,10 @@ ingress:
 # templates/networkpolicy.yaml.
 networkPolicy:
   enabled: true
+  # Restrict the ingress-facing pods (api :8000, ingestor :8001, frontend :80) to traffic from
+  # your ingress controller's namespace. Set to that namespace's labels, e.g. for ingress-nginx:
+  #   ingressControllerNamespaceSelector:
+  #     kubernetes.io/metadata.name: ingress-nginx
+  # Default {} keeps those ingress rules port-scoped but peer-permissive: the chart can't guess
+  # where the controller runs, and a wrong guess would silently drop webhooks/UI traffic.
+  ingressControllerNamespaceSelector: {}

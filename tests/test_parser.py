@@ -64,3 +64,11 @@ def test_steps_and_uses():
 def test_non_mapping_raises():
     with pytest.raises(ValueError):
         parse_workflow("- just\n- a\n- list\n", "bad.yml")
+
+
+def test_deeply_nested_yaml_raises_value_error_not_recursion_error():
+    """Hostile, pathologically nested YAML must surface as the parser's normal ValueError (so
+    callers' skip-unparseable handling applies), not crash the sweep with a RecursionError."""
+    hostile = "a: " + "[" * 20_000 + "]" * 20_000 + "\n"
+    with pytest.raises(ValueError, match="nesting"):
+        parse_workflow(hostile, "hostile.yml")
