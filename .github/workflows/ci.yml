@@ -7,7 +7,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 # One in-flight run per ref; a new push cancels the superseded run instead of queueing.
