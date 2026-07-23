@@ -24,6 +24,7 @@ from urllib.parse import quote, urlencode, urlparse
 import httpx
 
 from actionsplane.config import get_settings
+from actionsplane.github.recorder import install_recorder
 
 log = logging.getLogger(__name__)
 
@@ -145,6 +146,10 @@ class GitHubClient:
         cache: InstallationCache | None = None,
     ) -> None:
         self._client = client
+        # Live-validation cassette capture (runbook §6); no-op unless ACTIONSPLANE_RECORD_DIR set.
+        record_dir = get_settings().record_dir
+        if record_dir:
+            install_recorder(client, record_dir)
         # token may be None in offline mode (unauthenticated public reads, lower rate limit).
         self._token = token
         self._base = (api_url or get_settings().github_api_url).rstrip("/")

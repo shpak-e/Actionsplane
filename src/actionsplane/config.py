@@ -8,6 +8,7 @@ KMS-backed secret in prod (see the Security Model in ``plan.md``).
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -18,7 +19,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="ACTIONSPLANE_",
-        env_file=".env",
+        # `.env` is a dev convenience. ACTIONSPLANE_DISABLE_ENV_FILE=1 (set by the test suite's
+        # conftest) keeps runs hermetic when a developer has a real `.env` in the repo root —
+        # evaluated at import time, so it must be set before this module loads.
+        env_file=None if os.environ.get("ACTIONSPLANE_DISABLE_ENV_FILE") else ".env",
+        # Blank values (e.g. the `ACTIONSPLANE_GITHUB_APP_ID=` line in a fresh `.env` copied from
+        # `.env.example`) read as "unset" instead of failing int/None parsing at startup.
+        env_ignore_empty=True,
         extra="ignore",
     )
 
@@ -109,6 +116,12 @@ class Settings(BaseSettings):
     # trace). The exporter also honours the standard OTEL_EXPORTER_OTLP_* env vars.
     otel_enabled: bool = False
     otel_endpoint: str | None = None  # OTLP gRPC endpoint, e.g. http://otel-collector:4317
+
+    # --- live-validation cassette recorder (live-validation runbook §6) ---
+    # When set, every GitHub API exchange made through a GitHubClient is written to this directory
+    # as one sanitized JSON file (allowlisted headers only, so credentials never persist). Lab
+    # tooling for capturing the write-path contract corpus; leave unset in normal operation.
+    record_dir: str | None = None
 
     @property
     def offline_repo_list(self) -> list[str]:
