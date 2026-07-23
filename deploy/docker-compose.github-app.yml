@@ -1,0 +1,23 @@
+# Overlay: connect the full sandbox to a real GitHub App (live-validation runbook §2).
+#
+#   docker compose --env-file .env \
+#     -f deploy/docker-compose.full.yml -f deploy/docker-compose.github-app.yml up -d
+#
+# Run from the project root. `--env-file .env` makes the root .env the interpolation source
+# (compose would otherwise only read deploy/.env); the App private key is mounted read-only
+# from the repo root — both files are gitignored. The base stack stays App-less by default.
+
+services:
+  api: &github-app
+    environment:
+      ACTIONSPLANE_GITHUB_APP_ID: ${ACTIONSPLANE_GITHUB_APP_ID}
+      ACTIONSPLANE_GITHUB_APP_PRIVATE_KEY_PATH: /secrets/app.pem
+      ACTIONSPLANE_GITHUB_WEBHOOK_SECRET: ${ACTIONSPLANE_GITHUB_WEBHOOK_SECRET}
+      # Operate token — required before apply; blank stays open-read-only (env_ignore_empty).
+      ACTIONSPLANE_API_TOKEN: ${ACTIONSPLANE_API_TOKEN:-}
+      ACTIONSPLANE_BULK_EDITS_ENABLED: ${ACTIONSPLANE_BULK_EDITS_ENABLED:-false}
+      ACTIONSPLANE_SECURITY_EVENTS_ENABLED: ${ACTIONSPLANE_SECURITY_EVENTS_ENABLED:-false}
+    volumes:
+      - ../actionsplane.private-key.pem:/secrets/app.pem:ro
+  ingestor: *github-app
+  worker: *github-app
