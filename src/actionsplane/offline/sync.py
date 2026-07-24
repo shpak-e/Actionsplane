@@ -16,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from actionsplane.audit.service import audit_repo
 from actionsplane.config import get_settings
-from actionsplane.db.repository import get_repo, upsert_installation, upsert_repo, upsert_run
+from actionsplane.db.repository import (
+    get_repo,
+    upsert_installation,
+    upsert_repo,
+    upsert_run,
+    upsert_workflow,
+)
 from actionsplane.github.client import GitHubClient
 from actionsplane.ingestor import events
 
@@ -71,6 +77,9 @@ async def sync_repo(
 
     runs = 0
     for run in await gh.list_workflow_runs(owner, name):
+        wf = events.workflow_ref_from_run(run, repo.id)  # FK parent before the run
+        if wf is not None:
+            await upsert_workflow(session, wf)
         await upsert_run(session, events.normalize_run_object(run, repo.id))
         runs += 1
     await session.commit()
