@@ -13,11 +13,13 @@ import { CostTab } from "./components/CostTab";
 import { PolicyTab } from "./components/PolicyTab";
 import { RadarTab } from "./components/RadarTab";
 import { CampaignsTab } from "./components/CampaignsTab";
+import { ActivityTab } from "./components/ActivityTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { DocsTab } from "./components/DocsTab";
 import { SyncButton } from "./components/SyncButton";
 import { SettingsMenu } from "./components/SettingsMenu";
 import {
+  BrandActivity,
   BrandCampaigns,
   BrandCost,
   BrandDrift,
@@ -50,6 +52,7 @@ type Tab =
   | "pipelines"
   | "cost"
   | "campaigns"
+  | "activity"
   | "settings"
   | "docs";
 
@@ -136,6 +139,13 @@ export default function App() {
       icon: <BrandCampaigns size={22} />,
       group: "Act",
       hint: "Fleet-wide edit waves — dry-run diffs, then reviewed PRs",
+    },
+    {
+      id: "activity",
+      label: "Activity",
+      icon: <BrandActivity size={22} />,
+      group: "Act",
+      hint: "Audit trail — every write ActionsPlane made to your fleet",
     },
     {
       id: "settings",
@@ -281,6 +291,7 @@ export default function App() {
             {tab === "pipelines" && <PipelinesTab />}
             {tab === "cost" && <CostTab />}
             {tab === "campaigns" && <CampaignsTab />}
+            {tab === "activity" && <ActivityTab />}
             {tab === "settings" && <SettingsTab />}
             {tab === "docs" && <DocsTab />}
           </main>

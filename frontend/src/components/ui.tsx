@@ -227,6 +227,22 @@ export const BrandCost = ({ size = 20, className }: IconProps) =>
     </>,
   );
 
+// Activity — a timeline of events (audit trail: what the plane did to the fleet), lead dot in ember.
+export const BrandActivity = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <path d="M6 6.5 V17.5" stroke="currentColor" strokeWidth="2" />
+      <circle cx="6" cy="7" r="2.1" fill="var(--accent)" />
+      <path d="M9.5 7 H18" stroke="currentColor" strokeWidth="2" />
+      <path d="M9.5 12 H16" stroke="currentColor" strokeWidth="2" />
+      <path d="M9.5 17 H18" stroke="currentColor" strokeWidth="2" />
+      <circle cx="6" cy="12" r="1.6" stroke="currentColor" strokeWidth="2" />
+      <circle cx="6" cy="17" r="1.6" stroke="currentColor" strokeWidth="2" />
+    </>,
+  );
+
 // Settings — a gear with an ember hub (configuration: notifications, repos, access).
 export const BrandSettings = ({ size = 20, className }: IconProps) =>
   brand(

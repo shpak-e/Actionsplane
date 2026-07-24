@@ -828,3 +828,23 @@ th.cost-tip-col, td.cost-tip-col { width: 34px; padding-right: 0; }
 .cost-tip .cost-tip-ico { flex: none; margin-top: 2px; color: var(--fg-faint); }
 .cost-tip.warn .cost-tip-ico { color: var(--warn, #d9a441); }
 .cost-tip-fix { display: block; margin-top: 3px; font-size: 12px; color: var(--accent); }
+
+/* ---------- Activity feed (audit trail) ---------- */
+.activity-controls { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+.activity-cats { flex-wrap: wrap; }
+.activity-search { flex: 1; min-width: 200px; max-width: 340px; margin-left: auto; }
+.activity-feed { list-style: none; margin: 0; padding: 0; position: relative; }
+.activity-feed::before { content: ""; position: absolute; left: 5px; top: 4px; bottom: 4px; width: 2px; background: var(--border); }
+.activity-item { position: relative; display: flex; gap: 14px; padding: 9px 0 9px 22px; }
+.activity-dot { position: absolute; left: 0; top: 13px; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--fg-faint); }
+.activity-item.cat-campaign .activity-dot { border-color: var(--accent); }
+.activity-item.cat-audit .activity-dot { border-color: var(--warn, #d9a441); }
+.activity-item.cat-governance .activity-dot { border-color: var(--ok); }
+.activity-item.cat-drift .activity-dot { border-color: #8b7cf6; }
+.activity-main { min-width: 0; }
+.activity-line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.activity-action { font-weight: 600; color: var(--fg); font-size: 13.5px; }
+.activity-target { font-size: 12px; color: var(--fg-muted); }
+.activity-meta { display: flex; align-items: center; gap: 7px; margin-top: 3px; font-size: 12px; color: var(--fg-subtle); }
+.activity-actor { color: var(--fg-muted); }
+.activity-sep { color: var(--fg-faint); }

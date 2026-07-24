@@ -104,6 +104,15 @@ export interface NotificationEvent {
   description: string;
 }
 
+export interface AuditLogEntry {
+  id: number;
+  occurred_at: string;
+  actor: string;
+  action: string;
+  target: string | null;
+  detail: Record<string, unknown> | null;
+}
+
 export interface CostSuggestion {
   kind: string; // queue | failures | duration | share
   severity: string; // info | warn

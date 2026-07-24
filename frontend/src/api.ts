@@ -1,5 +1,6 @@
 import { getOperateToken } from "./lib/auth";
 import type {
+  AuditLogEntry,
   Binding,
   Campaign,
   CampaignSummary,
@@ -146,4 +147,10 @@ export const api = {
   deleteChannel: (id: number) => del<{ status: string; channel_id: number }>(`/notifications/channels/${id}`),
   testChannel: (id: number) => post<NotificationTest>(`/notifications/channels/${id}/test`),
   openapi: () => get<OpenApiDoc>("/meta/openapi"),
+  auditLog: (params: { limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => v != null && q.set(k, String(v)));
+    const qs = q.toString();
+    return get<AuditLogEntry[]>(`/audit-log${qs ? `?${qs}` : ""}`);
+  },
 };
