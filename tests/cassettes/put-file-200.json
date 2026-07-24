@@ -1,0 +1,26 @@
+{
+  "method": "PUT",
+  "url": "https://api.github.com/repos/shpak-e/ap-lab-messy/contents/.github/workflows/ci.yml",
+  "status": 200,
+  "request": {
+    "headers": {
+      "accept": "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json"
+    },
+    "body": "{\"message\":\"ci: pin-shas-2 — .github/workflows/ci.yml\",\"content\":\"bmFtZTogY2kKb246CiAgcHVzaDoKICBzY2hlZHVsZToKICAgIC0gY3JvbjogIjE3IDQgKiAqIDEiCmpvYnM6CiAgYnVpbGQ6CiAgICBydW5zLW9uOiB1YnVudHUtbGF0ZXN0CiAgICBzdGVwczoKICAgICAgLSB1c2VzOiBhY3Rpb25zL2NoZWNrb3V0QDExZDU5NjBhMzI2NzUwZDU4MzgwNzhlMzZjZjM4Yjg1YWY2NzcyNjIgICMgdjQKICAgICAgLSB1c2VzOiBhc3RyYWwtc2gvc2V0dXAtdXZAZDRiMmYzYjZlY2M2ZTY3YzQ0NTdmNmQzZTQxZWM0MmQzZDBmY2I4NiAgIyB2NQogICAgICAtIHJ1bjogZWNobyAiYnVpbGRpbmcgYXAtbGFiLW1lc3N5IgojIEFjdGlvbnNQbGFuZSBsaXZlLXZhbGlkYXRpb24gU3RhZ2UgQSB0cmlnZ2VyIDIwMjYtMDctMjRUMDk6MTJaCg==\",\"branch\":\"actionsplane/pin-shas-2\",\"sha\":\"1bbe36e8681c27c00b00cda5d3ab8f736903323f\"}",
+    "truncated": false
+  },
+  "response": {
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "etag": "W/\"0f3980831a2d4fbafc1d81c1c44f97e3d886b67a14101c346ac4e8705cc1cc21\"",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4961",
+      "x-ratelimit-reset": "1784887800",
+      "x-github-request-id": "ECB9:12E3C1:3C64EA:544ED5:6A63306C"
+    },
+    "body": "{\"content\":{\"name\":\"ci.yml\",\"path\":\".github/workflows/ci.yml\",\"sha\":\"898e0b434e185659dca6d738d4c70c9f4a68fec0\",\"size\":376,\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/contents/.github/workflows/ci.yml?ref=actionsplane/pin-shas-2\",\"html_url\":\"https://github.com/shpak-e/ap-lab-messy/blob/actionsplane/pin-shas-2/.github/workflows/ci.yml\",\"git_url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/blobs/898e0b434e185659dca6d738d4c70c9f4a68fec0\",\"download_url\":\"https://raw.githubusercontent.com/shpak-e/ap-lab-messy/actionsplane/pin-shas-2/.github/workflows/ci.yml\",\"type\":\"file\",\"_links\":{\"self\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/contents/.github/workflows/ci.yml?ref=actionsplane/pin-shas-2\",\"git\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/blobs/898e0b434e185659dca6d738d4c70c9f4a68fec0\",\"html\":\"https://github.com/shpak-e/ap-lab-messy/blob/actionsplane/pin-shas-2/.github/workflows/ci.yml\"}},\"commit\":{\"sha\":\"25ff5d552e1c87d9de89ba296c3cf4816f403711\",\"node_id\":\"C_kwDOThuHd9oAKDI1ZmY1ZDU1MmUxYzg3ZDlkZTg5YmEyOTZjM2NmNDgxNmY0MDM3MTE\",\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/commits/25ff5d552e1c87d9de89ba296c3cf4816f403711\",\"html_url\":\"https://github.com/shpak-e/ap-lab-messy/commit/25ff5d552e1c87d9de89ba296c3cf4816f403711\",\"author\":{\"name\":\"actionsplane-lab-shpak-e[bot]\",\"email\":\"308558537+actionsplane-lab-shpak-e[bot]@users.noreply.github.com\",\"date\":\"2026-07-24T09:29:17Z\"},\"committer\":{\"name\":\"GitHub\",\"email\":\"noreply@github.com\",\"date\":\"2026-07-24T09:29:17Z\"},\"tree\":{\"sha\":\"8a07c3463d9e5dbd63ddb0cff5be9c06cbea2608\",\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/trees/8a07c3463d9e5dbd63ddb0cff5be9c06cbea2608\"},\"message\":\"ci: pin-shas-2 — .github/workflows/ci.yml\",\"parents\":[{\"sha\":\"710c8cca65c454d4e6adae97fe0280483efda88a\",\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/commits/710c8cca65c454d4e6adae97fe0280483efda88a\",\"html_url\":\"https://github.com/shpak-e/ap-lab-messy/commit/710c8cca65c454d4e6adae97fe0280483efda88a\"}],\"verification\":{\"verified\":true,\"reason\":\"valid\",\"signature\":\"-----BEGIN PGP SIGNATURE-----\\n\\nwsFcBAABCAAQBQJqYzBtCRC1aQ7uu5UhlAAAo0sQALEGk7xF73fu/CZNOIVPu7lp\\nctcRR6hUILpKuP2iTWF0LVtgqS527Ov2ADUwwtG8TaWm37glaeMFERqtT2SM7bSQ\\nRGwcmCJk8SCT+aLvzdsSPk4N785lK3ncTkPD+W7mV+7mM+bHFz7yTBm52W/p0X1J\\nJT0ZTJSpwGBF09R7jPVroeakAL38sQzY3EQAnrO37B4RJhmCcbiYEC5dLC7M0cmj\\nO+PFAoaFA7FSEFnLeYh47TeOv3xz3B05ZjCn4UZzqNqfUBk97x5evybZUpvrlNhY\\naLMkHM5ZwKjj8NS4sMfppP+x/3X9XGNoN6lFA9rwzwnTvB1/WW5SFP9yxNxAidFq\\ntw1O6icsrYrsjGzXIK2GvFXn3/8IBskM/XCrFwh0BYiK85+I669is3vnz40xyMBs\\nc6AfSiv05ZYeFLV+pGSE+emSKWvIDzfSPA1zj06CV8IGBpIAgeQJl6geFvZnZSyb\\njX37M/xBlWjc+H6tEWY5t4gJbveYwOgLSAywgM17n8B4COHxHUbJCVJvpRzElZvv\\nJCHQdjWwTImWJw9FybGa/qW3qIh2p9dw1gwAt6868MLMjVPqWahF2GU+RrYSLiMt\\nxILJNTzlZ+xXke3rVU0r0ahlOGCLF4ttWR5kc/VqJzI8P5pnXmjzwFXElVEIvepV\\nMD+/wsI7O41ThfotcGdy\\n=JW8M\\n-----END PGP SIGNATURE-----\\n\",\"payload\":\"tree 8a07c3463d9e5dbd63ddb0cff5be9c06cbea2608\\nparent 710c8cca65c454d4e6adae97fe0280483efda88a\\nauthor actionsplane-lab-shpak-e[bot] <308558537+actionsplane-lab-shpak-e[bot]@users.noreply.github.com> 1784885357 +0000\\ncommitter GitHub <noreply@github.com> 1784885357 +0000\\n\\nci: pin-shas-2 — .github/workflows/ci.yml\",\"verified_at\":\"2026-07-24T09:29:17Z\"}}}",
+    "truncated": false
+  }
+}
