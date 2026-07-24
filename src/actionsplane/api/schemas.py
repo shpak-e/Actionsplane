@@ -109,6 +109,31 @@ class ScorecardOut(BaseModel):
     score: int
 
 
+class PolicySimulateIn(BaseModel):
+    """A proposed policy/ruleset to simulate against the fleet (W2). All rules default off."""
+
+    require_sha_pinned: bool = False
+    disallowed_triggers: list[str] = []
+    require_permissions: bool = False
+
+
+class RuleImpactOut(BaseModel):
+    rule: str
+    workflows: int
+    repos: int
+    fix_operation: str | None
+    fixable_repo_ids: list[int]
+
+
+class SimulationReportOut(BaseModel):
+    policy_rules: list[str]
+    workflows_evaluated: int
+    workflows_violating: int
+    repos_violating: int
+    by_rule: list[RuleImpactOut]
+    samples: list[dict]
+
+
 class TemplateOut(BaseModel):
     id: int
     name: str
