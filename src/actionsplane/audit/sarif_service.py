@@ -47,6 +47,7 @@ def _row_to_finding(row: AuditFinding) -> Finding:
         severity=Severity(row.severity),
         message=row.message,
         ref=row.ref,
+        path=row.path,
     )
 
 

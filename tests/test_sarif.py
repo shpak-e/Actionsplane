@@ -17,10 +17,25 @@ from actionsplane.models.enums import FindingType, Severity
 
 def _findings():
     return [
-        Finding(FindingType.UNPINNED_ACTION, Severity.HIGH, "x is unpinned", ref="x/y@main"),
+        Finding(
+            FindingType.UNPINNED_ACTION,
+            Severity.HIGH,
+            "x is unpinned",
+            ref="x/y@main",
+            path=".github/workflows/ci.yml",
+        ),
         Finding(FindingType.MISSING_PERMISSIONS, Severity.MEDIUM, "no perms"),
         Finding(FindingType.DEPRECATED_ACTION, Severity.LOW, "old", ref="actions/x@v1"),
     ]
+
+
+def test_sarif_result_uses_finding_path():
+    """Alerts must point at the finding's real workflow file, not a placeholder directory
+    (live-validation Stage A: Code Scanning showed `.github/workflows/` for every finding)."""
+    results = findings_to_sarif(_findings())["runs"][0]["results"]
+    uris = [r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] for r in results]
+    assert uris[0] == ".github/workflows/ci.yml"  # path threaded through
+    assert uris[1] == ".github/workflows/"  # graceful fallback when path is absent
 
 
 def test_sarif_shape():
