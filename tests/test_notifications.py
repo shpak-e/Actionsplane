@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import base64  # noqa: F401  (kept parallel with other tests' import style)
-from datetime import UTC, datetime
-
 import httpx
 import pytest
 from sqlalchemy.dialects.postgresql import JSONB
@@ -13,11 +10,7 @@ from sqlalchemy.ext.compiler import compiles
 
 from actionsplane.db.base import Base
 from actionsplane.db.models import NotificationChannel
-from actionsplane.db.repository import (
-    create_notification_channel,
-    list_notification_channels,
-    mark_notified,
-)
+from actionsplane.db.repository import create_notification_channel, mark_notified
 from actionsplane.notifications import service
 
 
@@ -116,7 +109,8 @@ async def test_send_slack_and_webhook_payloads():
 
     assert seen["https://hooks.slack.com/abc"] == {"text": "*Title*\nBody"}
     wh = seen["https://example.com/hook"]
-    assert wh["event"] == "run.failed" and wh["url"] == "https://pr" and wh["source"] == "actionsplane"
+    assert wh["event"] == "run.failed" and wh["url"] == "https://pr"
+    assert wh["source"] == "actionsplane"
 
 
 async def test_create_channel_endpoint_rejects_unknown_event(session):
