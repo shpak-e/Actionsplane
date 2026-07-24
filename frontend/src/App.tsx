@@ -23,10 +23,15 @@ import {
   BrandRepos,
   BrandRuns,
   BrandSecurity,
+  IconKey,
+  IconRepo,
+  IconX,
 } from "./components/ui";
 import { useEventStream } from "./hooks/useEventStream";
 import { useMode } from "./hooks/useMode";
+import { useRepos } from "./hooks/useRepos";
 import { useTheme } from "./hooks/useTheme";
+import { promptForToken, useHasOperateToken } from "./lib/auth";
 import type { Run } from "./types";
 
 type Tab = "runs" | "security" | "policy" | "radar" | "drift" | "pipelines" | "campaigns" | "repos";
@@ -36,22 +41,85 @@ export default function App() {
   const [workflow, setWorkflow] = useState<WorkflowSel>(null);
   const [tab, setTab] = useState<Tab>("runs");
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
+  const [firstRunDismissed, setFirstRunDismissed] = useState(false);
   const { connected } = useEventStream();
   const { data: mode } = useMode();
   const { theme, toggle } = useTheme();
+  const hasToken = useHasOperateToken();
+  const { repos, byId } = useRepos();
 
-  // Cached (shared with SecurityTab) — drives the count badge on the Security tab.
+  // Cached (shared with the tabs) — drive the attention badges on the rail.
   const { data: scorecard } = useQuery({ queryKey: ["scorecard"], queryFn: api.scorecard });
+  const { data: driftBindings } = useQuery({ queryKey: ["drift", null], queryFn: () => api.drift() });
+  const { data: radar } = useQuery({ queryKey: ["radar"], queryFn: api.radar });
+
+  const driftCount = (driftBindings ?? []).filter(
+    (b) => b.drift_severity && !["identical", "minor"].includes(b.drift_severity),
+  ).length;
+  const radarCount = (radar?.entries ?? []).filter(
+    (e) => e.status === "overdue" || e.status === "urgent",
+  ).length;
 
   const tabs: RailTab<Tab>[] = [
-    { id: "runs", label: "Runs", icon: <BrandRuns size={22} /> },
-    { id: "security", label: "Security", icon: <BrandSecurity size={22} />, count: scorecard?.open_findings },
-    { id: "policy", label: "Policy", icon: <BrandPolicy size={22} /> },
-    { id: "radar", label: "Radar", icon: <BrandRadar size={22} /> },
-    { id: "drift", label: "Drift", icon: <BrandDrift size={22} /> },
-    { id: "pipelines", label: "Pipelines", icon: <BrandPipelines size={22} /> },
-    { id: "campaigns", label: "Campaigns", icon: <BrandCampaigns size={22} /> },
-    { id: "repos", label: "Repos", icon: <BrandRepos size={22} /> },
+    {
+      id: "runs",
+      label: "Runs",
+      icon: <BrandRuns size={22} />,
+      group: "Observe",
+      hint: "Live workflow-run history across the fleet",
+    },
+    {
+      id: "pipelines",
+      label: "Pipelines",
+      icon: <BrandPipelines size={22} />,
+      group: "Observe",
+      hint: "How workflows trigger and call each other across repos",
+    },
+    {
+      id: "security",
+      label: "Security",
+      icon: <BrandSecurity size={22} />,
+      group: "Audit",
+      hint: "Supply-chain & hygiene findings, with one-click fixes",
+      count: scorecard?.open_findings,
+    },
+    {
+      id: "drift",
+      label: "Drift",
+      icon: <BrandDrift size={22} />,
+      group: "Audit",
+      hint: "How far a workflow has diverged from its canonical template",
+      count: driftCount,
+    },
+    {
+      id: "radar",
+      label: "Radar",
+      icon: <BrandRadar size={22} />,
+      group: "Audit",
+      hint: "Upcoming GitHub deprecations you must migrate before a deadline",
+      count: radarCount,
+    },
+    {
+      id: "policy",
+      label: "Policy",
+      icon: <BrandPolicy size={22} />,
+      group: "Audit",
+      hint: "Simulate a ruleset against the fleet before you enforce it",
+    },
+    {
+      id: "campaigns",
+      label: "Campaigns",
+      icon: <BrandCampaigns size={22} />,
+      group: "Act",
+      hint: "Fleet-wide edit waves — dry-run diffs, then reviewed PRs",
+    },
+    {
+      id: "repos",
+      label: "Repos",
+      icon: <BrandRepos size={22} />,
+      group: "Fleet",
+      hint: "Add or remove the repositories ActionsPlane watches",
+    },
   ];
 
   // Selecting a repo/workflow updates the scope of whatever tab you're on — it never yanks you to
@@ -69,6 +137,12 @@ export default function App() {
   // Pipelines, Campaigns, Repos) ignore a selection, so we hide it there rather than show an
   // always-on panel that does nothing on those views.
   const showTree = tab === "runs" || tab === "security" || tab === "drift";
+  const scopedRepo = showTree && repoId != null ? byId.get(repoId) : undefined;
+  const scopeName = scopedRepo ? `${scopedRepo.owner}/${scopedRepo.name}` : null;
+
+  // First-run nudge: writes are gated on an operate token, and the fleet is empty until repos are
+  // added. Rather than leave every Fix button disabled with a dead tooltip, point the way.
+  const showFirstRun = !firstRunDismissed && (!hasToken || repos.length === 0);
 
   return (
     <div className="app">
@@ -83,6 +157,19 @@ export default function App() {
             </div>
           </div>
 
+          {scopeName && (
+            <span className="scope-chip" title="This view is filtered to one repository">
+              <IconRepo size={12} /> {scopeName}
+              <button
+                onClick={() => selectRepo(null)}
+                aria-label="Clear repository scope"
+                title="Clear scope — show the whole fleet"
+              >
+                <IconX size={11} />
+              </button>
+            </span>
+          )}
+
           <div className="topbar-spacer" />
 
           {mode?.offline ? (
@@ -90,15 +177,41 @@ export default function App() {
           ) : (
             <span
               className={connected ? "live on" : "live"}
-              title={connected ? "Live updates connected" : "Live updates disconnected"}
+              title={
+                connected
+                  ? "Live — receiving run updates as they happen"
+                  : "Reconnecting to the live update stream (data still loads on refresh)"
+              }
             >
               <span className="dot" />
-              {connected ? "Live" : "Offline"}
+              {connected ? "Live" : "Reconnecting…"}
             </span>
           )}
 
           <SettingsMenu />
         </header>
+
+        {showFirstRun && (
+          <div className="firstrun">
+            <span className="firstrun-msg">
+              {repos.length === 0
+                ? "Add repositories from the Repos tab, then "
+                : "To open fix PRs and run campaigns, "}
+              set an operate token to enable the write controls.
+            </span>
+            <button className="btn sm primary" onClick={promptForToken}>
+              <IconKey size={13} /> Set operate token
+            </button>
+            <button
+              className="firstrun-close"
+              onClick={() => setFirstRunDismissed(true)}
+              aria-label="Dismiss"
+              title="Dismiss"
+            >
+              <IconX size={13} />
+            </button>
+          </div>
+        )}
 
         <div className={showTree ? "body" : "body no-tree"}>
           {showTree && (

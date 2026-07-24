@@ -126,7 +126,9 @@ export function RepoTree({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-title">Repositories</div>
+      <div className="sidebar-title" title="Filter this view to one repository or workflow">
+        Scope
+      </div>
 
       <div className="tree">
         <button
@@ -141,7 +143,7 @@ export function RepoTree({
 
         {!isLoading && repos.length === 0 && (
           <p className="muted" style={{ padding: "8px 10px", fontSize: 12 }}>
-            No repositories yet. Install the GitHub App (or run the seed script).
+            No repositories yet — add them from the <strong>Repos</strong> tab.
           </p>
         )}
 

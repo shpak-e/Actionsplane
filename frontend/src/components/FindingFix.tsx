@@ -2,8 +2,9 @@ import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useHasOperateToken } from "../lib/auth";
-import { ExternalLink, IconArrowRight, IconCheck, IconExternal, IconX } from "./ui";
+import { promptForToken, useHasOperateToken } from "../lib/auth";
+import { operationLabel } from "../lib/labels";
+import { ExternalLink, IconArrowRight, IconCheck, IconExternal, IconKey, IconX } from "./ui";
 import type { Finding } from "../types";
 
 /** Per-finding remediation. `op` names an implemented bulk-edit operation when one exists — those
@@ -92,12 +93,12 @@ export function FindingFix({ finding }: { finding: Finding }) {
     <>
       <button
         ref={btnRef}
-        className="btn sm"
+        className={info.op ? "btn sm fix-cta" : "btn sm"}
         onClick={toggle}
         aria-expanded={pos != null}
-        title="Show how to fix this finding"
+        title={info.op ? "One-click fix — opens a pull request" : "How to fix this finding"}
       >
-        Fix
+        Fix{info.op ? " ▸" : ""}
       </button>
 
       {pos != null &&
@@ -115,16 +116,22 @@ export function FindingFix({ finding }: { finding: Finding }) {
 
               {info.op ? (
                 <>
-                  <button
-                    className="btn sm primary"
-                    disabled={!hasToken || fix.isPending || fix.isSuccess}
-                    onClick={() => fix.mutate()}
-                    title={hasToken ? "Open a pull request that applies the fix" : "Set an operate token first"}
-                  >
-                    <IconArrowRight /> {fix.isPending ? "Opening PR…" : "Open fix PR"}
-                  </button>
-                  {!hasToken && (
-                    <p className="settings-hint">Set an operate token (key icon) to open fix PRs.</p>
+                  <p className="settings-hint subtle" style={{ marginTop: 2 }}>
+                    Fix operation: <span className="mono">{operationLabel(info.op)}</span>
+                  </p>
+                  {hasToken ? (
+                    <button
+                      className="btn sm primary"
+                      disabled={fix.isPending || fix.isSuccess}
+                      onClick={() => fix.mutate()}
+                      title="Open a pull request that applies the fix"
+                    >
+                      <IconArrowRight /> {fix.isPending ? "Opening PR…" : "Open fix PR"}
+                    </button>
+                  ) : (
+                    <button className="btn sm primary" onClick={promptForToken}>
+                      <IconKey /> Set operate token to fix
+                    </button>
                   )}
                   {fix.isError && (
                     <div className="toast err">

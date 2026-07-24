@@ -98,11 +98,11 @@ export function RadarTab() {
                   <td className="actions">
                     {e.fix_operation ? (
                       <CampaignButton
-                        name={`migrate: ${e.id}`}
+                        name={`Migrate ${e.target} → ${e.replacement}`}
                         operation={e.fix_operation}
                         repoIds={e.fixable_repo_ids}
                         params={paramsFor(e)}
-                        label="Migrate"
+                        label="Fix"
                       />
                     ) : (
                       <span className="subtle" style={{ fontSize: 12 }}>

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { getOperateToken, setOperateToken, useHasOperateToken } from "../lib/auth";
+import { useEffect, useState } from "react";
+import { getOperateToken, onPromptForToken, setOperateToken, useHasOperateToken } from "../lib/auth";
 import { IconCheck, IconKey } from "./ui";
 
 /**
@@ -13,6 +13,16 @@ export function SettingsMenu() {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const hasToken = useHasOperateToken();
+
+  // A disabled write control anywhere can ask us to open (see promptForToken).
+  useEffect(
+    () =>
+      onPromptForToken(() => {
+        setDraft(getOperateToken());
+        setOpen(true);
+      }),
+    [],
+  );
 
   function toggle() {
     if (open) {

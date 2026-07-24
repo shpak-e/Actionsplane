@@ -92,8 +92,9 @@ export function RunGrid({
         <TableSkeleton />
       ) : runs.length === 0 ? (
         <EmptyState icon={<IconActivity size={34} />} title="No runs yet">
-          Install the GitHub App and trigger a workflow, or run{" "}
-          <span className="mono">scripts/seed_local.py</span> to load demo data.
+          {repoId
+            ? "This repository has no recorded runs yet — trigger a workflow and it will appear here live."
+            : "No workflow runs recorded yet. Once a watched repository runs a workflow, it shows up here in real time."}
         </EmptyState>
       ) : (
         <div className="table-wrap">

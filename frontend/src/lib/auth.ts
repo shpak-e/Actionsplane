@@ -37,6 +37,22 @@ export function setOperateToken(token: string): void {
   for (const notify of listeners) notify();
 }
 
+/**
+ * Deep-link to the operate-token popover. Disabled write controls (Fix / Apply / Sync) dispatch
+ * this instead of showing a dead-end "set a token first" tooltip; the header SettingsMenu listens
+ * for it and opens itself, so there is a live path from "why is this disabled?" to setting a token.
+ */
+const OPEN_TOKEN_EVENT = "actionsplane:open-token";
+
+export function promptForToken(): void {
+  window.dispatchEvent(new Event(OPEN_TOKEN_EVENT));
+}
+
+export function onPromptForToken(handler: () => void): () => void {
+  window.addEventListener(OPEN_TOKEN_EVENT, handler);
+  return () => window.removeEventListener(OPEN_TOKEN_EVENT, handler);
+}
+
 function subscribe(callback: () => void): () => void {
   listeners.add(callback);
   // Cross-tab sync: saving the token in one tab updates the others (key === null on clear()).
