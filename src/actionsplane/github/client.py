@@ -488,6 +488,39 @@ class GitHubClient:
         )
         resp.raise_for_status()
 
+    async def create_required_check_ruleset(
+        self, owner: str, repo: str, *, check: str, name: str | None = None
+    ) -> dict:
+        """Create a branch ruleset on the default branch requiring one status check (W7).
+
+        Uses the **rulesets** API rather than the legacy branch-protection PUT, so it's additive —
+        it never clobbers existing protection. Requires the App's ``administration: write``
+        permission; a 403 surfaces cleanly if that (org-admin-level) grant wasn't given, which is
+        why the feature is optional. Returns ``{"id", "name"}``.
+        """
+        resp = await self._client.post(
+            f"{self._repo(owner, repo)}/rulesets",
+            headers=self._headers,
+            json={
+                "name": name or f"actionsplane: require {check}",
+                "target": "branch",
+                "enforcement": "active",
+                "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+                "rules": [
+                    {
+                        "type": "required_status_checks",
+                        "parameters": {
+                            "required_status_checks": [{"context": check}],
+                            "strict_required_status_checks_policy": False,
+                        },
+                    }
+                ],
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {"id": data.get("id"), "name": data.get("name")}
+
     async def upload_sarif(
         self,
         owner: str,

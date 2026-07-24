@@ -203,6 +203,34 @@ class BindingOut(BaseModel):
     drift_severity: str | None
 
 
+class RequireCheckIn(BaseModel):
+    """Require a status check on the default branch of each listed repo (W7)."""
+
+    check: str
+    repo_ids: list[int]
+
+    @field_validator("check")
+    @classmethod
+    def _check_nonempty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("check name is required")
+        return v
+
+
+class RequireCheckResult(BaseModel):
+    repo_id: int
+    repo: str | None = None
+    status: str  # "required" | "error"
+    detail: str | None = None
+    ruleset_id: int | None = None
+
+
+class RequireCheckOut(BaseModel):
+    check: str
+    results: list[RequireCheckResult]
+
+
 class DriftDetailOut(BaseModel):
     """Recomputed drift diff for one binding — change list plus both YAMLs for a side-by-side."""
 

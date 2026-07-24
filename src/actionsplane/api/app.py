@@ -41,6 +41,8 @@ from actionsplane.api.schemas import (
     RadarReportOut,
     RepoAddIn,
     RepoOut,
+    RequireCheckIn,
+    RequireCheckOut,
     RunOut,
     SarifIngestIn,
     SarifIngestOut,
@@ -90,6 +92,7 @@ from actionsplane.executor.actions import rerun_run
 from actionsplane.executor.campaigns import apply_campaign, run_dry_run
 from actionsplane.executor.operations import OPERATIONS
 from actionsplane.github.client import GitHubClient
+from actionsplane.governance.service import require_check_fleet
 from actionsplane.metrics import summarize_runs
 from actionsplane.observability import instrument_fastapi, setup_tracing
 from actionsplane.offline import last_sync, sync_offline
@@ -566,6 +569,35 @@ async def simulate_policy_endpoint(
     )
     report = await simulate_policy(session, policy)
     return SimulationReportOut(**asdict(report))
+
+
+@router.post("/governance/require-check", response_model=RequireCheckOut)
+async def require_check_endpoint(
+    body: RequireCheckIn,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> RequireCheckOut:
+    """Require a status check on each listed repo's default branch (W7 — optional, gated write).
+
+    A direct GitHub write (branch ruleset), not a PR — so it's fail-closed behind bulk-edits + the
+    operate token, and needs the App's ``administration: write`` permission. Per-repo failures
+    (e.g. permission not granted) are returned in the result, not raised.
+    """
+    try:
+        results = await require_check_fleet(session, check=body.check, repo_ids=body.repo_ids)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="governance.require_check",
+        target=f"check:{body.check}",
+        detail={"repo_ids": body.repo_ids, "results": [r["status"] for r in results]},
+    )
+    await session.commit()
+    return RequireCheckOut(check=body.check, results=results)
 
 
 @router.get("/deprecations/radar", response_model=RadarReportOut)
