@@ -16,6 +16,9 @@ kind: Deployment
 metadata:
   name: {{ include "actionsplane.fullname" . }}-ingestor
   labels: {{- include "actionsplane.labels" . | nindent 4 }}
+  {{- if .Values.keel.enabled }}
+  annotations: {{- include "actionsplane.keelAnnotations" . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.ingestor.replicas }}
   selector:

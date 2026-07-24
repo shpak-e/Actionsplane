@@ -104,6 +104,22 @@ export interface NotificationEvent {
   description: string;
 }
 
+export interface AuditLogEntry {
+  id: number;
+  occurred_at: string;
+  actor: string;
+  action: string;
+  target: string | null;
+  detail: Record<string, unknown> | null;
+}
+
+export interface CostSuggestion {
+  kind: string; // queue | failures | duration | share
+  severity: string; // info | warn
+  message: string;
+  fix_operation: string | null;
+}
+
 export interface FleetCostRow {
   workflow_id: number;
   repo: string | null;
@@ -115,6 +131,7 @@ export interface FleetCostRow {
   p95_duration_s: number | null;
   p95_queue_s: number | null;
   last_run_at: string | null;
+  suggestions: CostSuggestion[];
 }
 
 export interface FleetCost {

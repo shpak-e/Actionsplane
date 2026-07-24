@@ -1,13 +1,18 @@
-# Release: build + push the four component images to GHCR with provenance attestations.
+# Release: build + push the four component images to GHCR.
 #
-# Trigger: push a semver tag (`git tag v0.1.0 && git push origin v0.1.0`), or run manually.
+# Triggers:
+#   - push to `master`  → rolling `edge` tag (+ the git SHA). This is what keeps a running deploy
+#     auto-updatable: point Compose/Helm at `:edge` and a watcher pulls each new build. amd64-only
+#     and no attestation, to keep per-merge CI fast.
+#   - push a semver tag (`git tag v0.1.0 && git push origin v0.1.0`) → a real release: multi-arch
+#     (amd64+arm64), `latest`, `0.1.0`, `0.1`, and an SLSA provenance attestation.
+#   - manual dispatch.
 # Auth: the built-in GITHUB_TOKEN (packages:write) — no PAT, no extra account, no secret to manage.
 # Images: ghcr.io/<owner>/actionsplane-{api,ingestor,worker,frontend}
-#   tags: exact version (v0.1.0 → 0.1.0), major.minor (0.1), latest (on tags), and the git SHA.
 # Supply chain (dogfooding what ActionsPlane preaches):
 #   - every third-party action SHA-pinned
 #   - buildx provenance + SBOM baked into the image manifest
-#   - GitHub artifact attestation (SLSA provenance) pushed to the registry
+#   - GitHub artifact attestation (SLSA provenance) pushed to the registry (releases only)
 #     → verify with: gh attestation verify oci://ghcr.io/<owner>/actionsplane-api:<tag> --owner <owner>
 #
 # After the first push, each package appears at github.com/<owner>?tab=packages — set visibility
@@ -18,14 +23,22 @@ name: release
 
 on:
   push:
+    branches: [master]
     tags: ["v*.*.*"]
   workflow_dispatch: {}
+
+# Only the newest build per ref matters; cancel a superseded edge build so merges don't queue up.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
   REGISTRY: ghcr.io
+  # A release is a semver tag push; anything else (master, dispatch) publishes the rolling `edge`.
+  IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   build-push:
@@ -74,7 +87,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=latest,enable=${{ env.IS_RELEASE }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/master' }}
           labels: |
             org.opencontainers.image.title=actionsplane-${{ matrix.component }}
             org.opencontainers.image.description=ActionsPlane ${{ matrix.component }} — fleet control plane for GitHub Actions
@@ -86,7 +100,8 @@ jobs:
         with:
           context: .
           file: deploy/docker/Dockerfile.${{ matrix.component }}
-          platforms: linux/amd64,linux/arm64
+          # Multi-arch for releases; amd64-only for edge so per-merge builds stay fast.
+          platforms: ${{ env.IS_RELEASE == 'true' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -95,7 +110,9 @@ jobs:
           # No GHA build cache on purpose (zizmor cache-poisoning): a poisoned cache entry could
           # inject content into a *published* image. Releases are rare — cold builds are fine.
 
+      # SLSA provenance attestation only for real releases (a signed, verifiable release artifact).
       - name: Attest build provenance (SLSA)
+        if: env.IS_RELEASE == 'true'
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-name: ${{ env.IMAGE }}

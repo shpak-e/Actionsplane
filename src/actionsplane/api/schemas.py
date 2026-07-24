@@ -78,6 +78,15 @@ class MetricsOut(BaseModel):
     flake_rate: float | None
 
 
+class CostSuggestionOut(BaseModel):
+    """One cost/time optimization suggestion for a workflow (Cost view)."""
+
+    kind: str  # queue | failures | duration | share
+    severity: str  # info | warn
+    message: str
+    fix_operation: str | None = None  # implemented bulk-edit op that addresses it, if any
+
+
 class FleetCostRow(BaseModel):
     """Per-workflow cost/time rollup across the fleet (for the Cost view)."""
 
@@ -91,6 +100,7 @@ class FleetCostRow(BaseModel):
     p95_duration_s: float | None
     p95_queue_s: float | None
     last_run_at: datetime | None
+    suggestions: list[CostSuggestionOut] = []
 
 
 class FleetCostOut(BaseModel):

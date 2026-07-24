@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/itamar/actionsplane-frontend:0.1.0
+          image: ghcr.io/shpak-e/actionsplane-frontend:0.1.0
           ports:
             - containerPort: 80
           readinessProbe:

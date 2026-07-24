@@ -18,7 +18,7 @@ spec:
         runAsUser: 10001
       containers:
         - name: worker
-          image: ghcr.io/itamar/actionsplane-worker:0.1.0
+          image: ghcr.io/shpak-e/actionsplane-worker:0.1.0
           envFrom:
             - configMapRef: { name: actionsplane-config }
             - secretRef: { name: actionsplane-secrets }

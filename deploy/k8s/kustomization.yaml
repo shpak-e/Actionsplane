@@ -21,11 +21,11 @@ resources:
 # Pin all five images to one tag in one place. Override the registry/tag per environment with
 # `kustomize edit set image` or an overlay.
 images:
-  - name: ghcr.io/itamar/actionsplane-api
-    newTag: "0.1.0"
-  - name: ghcr.io/itamar/actionsplane-ingestor
-    newTag: "0.1.0"
-  - name: ghcr.io/itamar/actionsplane-worker
-    newTag: "0.1.0"
-  - name: ghcr.io/itamar/actionsplane-frontend
-    newTag: "0.1.0"
+  - name: ghcr.io/shpak-e/actionsplane-api
+    newTag: "edge"
+  - name: ghcr.io/shpak-e/actionsplane-ingestor
+    newTag: "edge"
+  - name: ghcr.io/shpak-e/actionsplane-worker
+    newTag: "edge"
+  - name: ghcr.io/shpak-e/actionsplane-frontend
+    newTag: "edge"

@@ -30,7 +30,7 @@ spec:
         runAsUser: 10001
       containers:
         - name: ingestor
-          image: ghcr.io/itamar/actionsplane-ingestor:0.1.0
+          image: ghcr.io/shpak-e/actionsplane-ingestor:0.1.0
           ports:
             - containerPort: 8001
           envFrom:

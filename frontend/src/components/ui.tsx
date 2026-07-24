@@ -61,6 +61,8 @@ export const IconSun = ({ size = 15, className }: IconProps) =>
   svg(size, className, <><circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></>);
 export const IconMoon = ({ size = 15, className }: IconProps) =>
   svg(size, className, <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />);
+export const IconZap = ({ size = 14, className }: IconProps) =>
+  svg(size, className, <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />);
 
 /* ---------- brand toolbar icons ----------
    Bespoke geometric glyphs in the logo-studies language: grey geometry + a single ember accent
@@ -222,6 +224,22 @@ export const BrandCost = ({ size = 20, className }: IconProps) =>
       <path d="M12 13.5 L15.5 15.5" stroke="currentColor" strokeWidth="2" />
       <path d="M9.5 3.5 H14.5" stroke="currentColor" strokeWidth="2" />
       <path d="M12 3.5 V6" stroke="currentColor" strokeWidth="2" />
+    </>,
+  );
+
+// Activity — a timeline of events (audit trail: what the plane did to the fleet), lead dot in ember.
+export const BrandActivity = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <path d="M6 6.5 V17.5" stroke="currentColor" strokeWidth="2" />
+      <circle cx="6" cy="7" r="2.1" fill="var(--accent)" />
+      <path d="M9.5 7 H18" stroke="currentColor" strokeWidth="2" />
+      <path d="M9.5 12 H16" stroke="currentColor" strokeWidth="2" />
+      <path d="M9.5 17 H18" stroke="currentColor" strokeWidth="2" />
+      <circle cx="6" cy="12" r="1.6" stroke="currentColor" strokeWidth="2" />
+      <circle cx="6" cy="17" r="1.6" stroke="currentColor" strokeWidth="2" />
     </>,
   );
 

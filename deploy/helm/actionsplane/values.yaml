@@ -1,8 +1,20 @@
 # -- Container image registry + tag shared by the four app images.
+# Published by the `release` workflow to ghcr.io/shpak-e/actionsplane-{api,ingestor,worker,frontend}.
+# Use a semver tag ("0.1.0") for a pinned release, or "edge" to track the rolling build of master.
 image:
-  registry: ghcr.io/itamar
-  tag: "0.1.0"
-  pullPolicy: IfNotPresent
+  registry: ghcr.io/shpak-e
+  tag: "edge"
+  # `edge` moves under a fixed tag, so pull it every start; pin a semver + IfNotPresent in prod.
+  pullPolicy: Always
+
+# Optional auto-update: when running Keel (https://keel.sh) in the cluster, these annotations let it
+# watch GHCR and roll a Deployment when its tag's digest changes — the k8s equivalent of the Compose
+# watchtower. No-op if Keel isn't installed. Track `edge` with policy "force" (same tag, new digest).
+keel:
+  enabled: false
+  policy: force          # force = redeploy when the tracked tag's digest changes
+  trigger: poll
+  pollSchedule: "@every 5m"
 
 # Per-component image *name* (under image.registry), replica count, and resources.
 api:

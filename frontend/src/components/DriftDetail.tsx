@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
+import { CampaignButton } from "./CampaignButton";
 import { DriftPill, ErrorBanner, IconArrowRight, TableSkeleton } from "./ui";
 
 type DiffRow = { t: "ctx" | "add" | "del"; text: string };
@@ -28,7 +29,15 @@ function lineDiff(aStr: string, bStr: string): DiffRow[] {
 }
 
 /** Full-page drift detail (rendered inside the content area, replacing the binding list). */
-export function DriftDetail({ bindingId, onClose }: { bindingId: number; onClose: () => void }) {
+export function DriftDetail({
+  bindingId,
+  repoId,
+  onClose,
+}: {
+  bindingId: number;
+  repoId: number;
+  onClose: () => void;
+}) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["drift-detail", bindingId],
     queryFn: () => api.driftDetail(bindingId),
@@ -58,6 +67,15 @@ export function DriftDetail({ bindingId, onClose }: { bindingId: number; onClose
               +{added} −{removed}
             </span>
             <DriftPill severity={data.severity} />
+            {data.changes.length > 0 && (
+              <CampaignButton
+                name={`Sync ${data.path} to template ${data.template}`}
+                operation="sync-template"
+                repoIds={[repoId]}
+                params={{ path: data.path, canonical_yaml: data.canonical_yaml }}
+                label="Sync to template"
+              />
+            )}
           </div>
         )}
       </div>

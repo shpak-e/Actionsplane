@@ -22,10 +22,10 @@ Point the manifests at your registry/tag in one place:
 ```sh
 cd deploy/k8s
 kustomize edit set image \
-  ghcr.io/itamar/actionsplane-api=$REG/actionsplane-api:$TAG \
-  ghcr.io/itamar/actionsplane-ingestor=$REG/actionsplane-ingestor:$TAG \
-  ghcr.io/itamar/actionsplane-worker=$REG/actionsplane-worker:$TAG \
-  ghcr.io/itamar/actionsplane-frontend=$REG/actionsplane-frontend:$TAG
+  ghcr.io/shpak-e/actionsplane-api=$REG/actionsplane-api:$TAG \
+  ghcr.io/shpak-e/actionsplane-ingestor=$REG/actionsplane-ingestor:$TAG \
+  ghcr.io/shpak-e/actionsplane-worker=$REG/actionsplane-worker:$TAG \
+  ghcr.io/shpak-e/actionsplane-frontend=$REG/actionsplane-frontend:$TAG
 ```
 
 ## 2. Create secrets (do NOT use secret.example.yaml as-is)

@@ -44,6 +44,7 @@ const REMEDIATION: Record<string, { title: string; steps: string; op?: string }>
     title: "Add a concurrency group",
     steps:
       "Add a concurrency: block with cancel-in-progress so overlapping runs on the same ref can't race.",
+    op: "add-concurrency",
   },
   dangling_workflow_run: {
     title: "Fix the workflow_run reference",

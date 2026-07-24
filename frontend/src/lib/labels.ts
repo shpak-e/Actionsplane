@@ -4,6 +4,7 @@ export const OPERATION_LABEL: Record<string, string> = {
   "set-permissions": "Set least-privilege permissions",
   "swap-runs-on": "Update runner image",
   "bump-action-version": "Upgrade action version",
+  "add-concurrency": "Add a concurrency group",
   "inject-step": "Add a step",
 };
 

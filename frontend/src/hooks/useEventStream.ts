@@ -1,20 +1,35 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { LiveEnvelope } from "../types";
 
 /**
  * Subscribe to the backend SSE stream and invalidate the relevant React Query caches when a
  * live run/job update arrives — sub-second dashboard refresh without polling (plan §5.1).
- * Returns whether the stream is currently connected, for the header's live indicator.
+ *
+ * The browser's EventSource auto-reconnects on transient drops, but it gives up quietly if the
+ * network is down for a while or a proxy closes an idle connection, leaving the indicator stuck on
+ * "Reconnecting…". So we (a) expose a `reconnect()` the UI can call from a button, and (b) force a
+ * fresh connection whenever the tab becomes visible again or the browser reports it's back online —
+ * the two moments a stale stream is most likely and a user is most likely watching.
  */
-export function useEventStream(): { connected: boolean } {
+export function useEventStream(): { connected: boolean; reconnect: () => void } {
   const queryClient = useQueryClient();
   const [connected, setConnected] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  const connectedRef = useRef(false);
+
+  const reconnect = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
     const source = new EventSource("/api/v1/events/stream");
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
+    source.onopen = () => {
+      connectedRef.current = true;
+      setConnected(true);
+    };
+    source.onerror = () => {
+      connectedRef.current = false;
+      setConnected(false);
+    };
 
     // Coalesce a burst of live ticks into at most one invalidation pass per window, scoped to the
     // repos/runs actually touched — a webhook storm on one repo shouldn't refetch every dashboard
@@ -68,11 +83,27 @@ export function useEventStream(): { connected: boolean } {
       if (flushTimer == null) flushTimer = setTimeout(flush, FLUSH_MS);
     });
 
+    // Kick a reconnect when the tab is refocused or the network returns and the stream is down.
+    const revive = () => {
+      if (!connectedRef.current && (document.visibilityState === "visible" || navigator.onLine)) {
+        reconnect();
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") revive();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", revive);
+    window.addEventListener("focus", revive);
+
     return () => {
       if (flushTimer != null) clearTimeout(flushTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", revive);
+      window.removeEventListener("focus", revive);
       source.close();
     };
-  }, [queryClient]);
+  }, [queryClient, nonce, reconnect]);
 
-  return { connected };
+  return { connected, reconnect };
 }

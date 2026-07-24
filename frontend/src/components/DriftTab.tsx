@@ -19,7 +19,14 @@ export function DriftTab({ repoId }: { repoId: number | null }) {
 
   // A selected binding takes over the whole tab as a full-page diff view.
   if (openBinding != null) {
-    return <DriftDetail bindingId={openBinding} onClose={() => setOpenBinding(null)} />;
+    const b = bindings.find((x) => x.id === openBinding);
+    return (
+      <DriftDetail
+        bindingId={openBinding}
+        repoId={b?.repo_id ?? 0}
+        onClose={() => setOpenBinding(null)}
+      />
+    );
   }
 
   const drifted = bindings.filter(

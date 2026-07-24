@@ -3,6 +3,9 @@ kind: Deployment
 metadata:
   name: {{ include "actionsplane.fullname" . }}-worker
   labels: {{- include "actionsplane.labels" . | nindent 4 }}
+  {{- if .Values.keel.enabled }}
+  annotations: {{- include "actionsplane.keelAnnotations" . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.worker.replicas }}
   selector:
