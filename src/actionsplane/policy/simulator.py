@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 _FIX_OPERATION: dict[str, str | None] = {
     "require_sha_pinned": "pin-shas",
     "disallowed_trigger": None,  # remediation is workflow-specific (drop/guard the trigger)
-    "require_permissions": None,  # needs a per-workflow least-privilege set
+    "require_permissions": "set-permissions",  # W3: adds a least-privilege contents: read block
 }
 
 

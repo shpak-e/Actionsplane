@@ -8,16 +8,26 @@ import { RunDetail } from "./components/RunDetail";
 import { SecurityTab } from "./components/SecurityTab";
 import { DriftTab } from "./components/DriftTab";
 import { PipelinesTab } from "./components/PipelinesTab";
+import { PolicyTab } from "./components/PolicyTab";
+import { RadarTab } from "./components/RadarTab";
 import { ReposTab } from "./components/ReposTab";
 import { SyncButton } from "./components/SyncButton";
 import { SettingsMenu } from "./components/SettingsMenu";
-import { BrandDrift, BrandPipelines, BrandRepos, BrandRuns, BrandSecurity } from "./components/ui";
+import {
+  BrandDrift,
+  BrandPipelines,
+  BrandPolicy,
+  BrandRadar,
+  BrandRepos,
+  BrandRuns,
+  BrandSecurity,
+} from "./components/ui";
 import { useEventStream } from "./hooks/useEventStream";
 import { useMode } from "./hooks/useMode";
 import { useTheme } from "./hooks/useTheme";
 import type { Run } from "./types";
 
-type Tab = "runs" | "security" | "drift" | "pipelines" | "repos";
+type Tab = "runs" | "security" | "policy" | "radar" | "drift" | "pipelines" | "repos";
 
 export default function App() {
   const [repoId, setRepoId] = useState<number | null>(null);
@@ -34,6 +44,8 @@ export default function App() {
   const tabs: RailTab<Tab>[] = [
     { id: "runs", label: "Runs", icon: <BrandRuns size={22} /> },
     { id: "security", label: "Security", icon: <BrandSecurity size={22} />, count: scorecard?.open_findings },
+    { id: "policy", label: "Policy", icon: <BrandPolicy size={22} /> },
+    { id: "radar", label: "Radar", icon: <BrandRadar size={22} /> },
     { id: "drift", label: "Drift", icon: <BrandDrift size={22} /> },
     { id: "pipelines", label: "Pipelines", icon: <BrandPipelines size={22} /> },
     { id: "repos", label: "Repos", icon: <BrandRepos size={22} /> },
@@ -98,6 +110,8 @@ export default function App() {
               />
             )}
             {tab === "security" && <SecurityTab repoId={repoId} />}
+            {tab === "policy" && <PolicyTab />}
+            {tab === "radar" && <RadarTab />}
             {tab === "drift" && <DriftTab repoId={repoId} />}
             {tab === "pipelines" && <PipelinesTab />}
             {tab === "repos" && <ReposTab />}
