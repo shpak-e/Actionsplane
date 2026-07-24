@@ -1,0 +1,30 @@
+# Overlay: turn on Code Scanning (SARIF) upload + the write-path cassette recorder
+# (live-validation runbook §4–§6). Compose from the project root, after the github-app overlay:
+#
+#   docker compose --env-file .env \
+#     -f deploy/docker-compose.full.yml \
+#     -f deploy/docker-compose.github-app.yml \
+#     -f deploy/docker-compose.record.yml up -d
+#
+# ACTIONSPLANE_RECORD_DIR makes every GitHub API exchange land as a sanitized JSON cassette under
+# the mounted host dir (../tests/cassettes/raw, gitignored) — allowlisted headers only, no tokens.
+# Recording spans the api (campaign apply, on-demand SARIF) and worker (post-audit SARIF), so both
+# mount the dir. SECURITY_EVENTS_ENABLED opts into the security_events:write scope + SARIF push.
+
+x-record-env: &record-env
+  ACTIONSPLANE_SECURITY_EVENTS_ENABLED: "true"
+  ACTIONSPLANE_RECORD_DIR: /cassettes
+
+services:
+  api:
+    environment: *record-env
+    volumes:
+      - ../tests/cassettes/raw:/cassettes
+  ingestor:
+    environment: *record-env
+    volumes:
+      - ../tests/cassettes/raw:/cassettes
+  worker:
+    environment: *record-env
+    volumes:
+      - ../tests/cassettes/raw:/cassettes

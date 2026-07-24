@@ -1,0 +1,25 @@
+{
+  "method": "GET",
+  "url": "https://api.github.com/repos/actions/checkout/commits/v4",
+  "status": 200,
+  "request": {
+    "headers": {
+      "accept": "application/vnd.github.sha",
+      "x-github-api-version": "2022-11-28"
+    },
+    "body": null,
+    "truncated": false
+  },
+  "response": {
+    "headers": {
+      "content-type": "application/vnd.github.sha; charset=utf-8",
+      "etag": "\"11d5960a326750d5838078e36cf38b85af677262\"",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4965",
+      "x-ratelimit-reset": "1784887800",
+      "x-github-request-id": "ECAF:5F02:3C6C0C:54553B:6A63306A"
+    },
+    "body": "11d5960a326750d5838078e36cf38b85af677262",
+    "truncated": false
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "method": "POST",
+  "url": "https://api.github.com/repos/shpak-e/ap-lab-messy/code-scanning/sarifs",
+  "status": 202,
+  "request": {
+    "headers": {
+      "accept": "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json"
+    },
+    "body": "{\"commit_sha\":\"710c8cca65c454d4e6adae97fe0280483efda88a\",\"ref\":\"refs/heads/main\",\"sarif\":\"H4sIAKIuY2oC/+VV224bNxD9FWLRhxaotPcLnZek1wRN0wCO+9IG1pA7lFjvkguSK9Uw/O+dXcmuLDtBWvQl6IMAambOzJlzSOkm+sLLDfYQnbFoE8Lgz+LYwW651mEzitGjk9YENGEpbR9b8NovgvSxB6fVwg8o4x60ic/nLgHuEvPXRbZMl8nyD29N9DWLtui8piONmhNTzI3GU+C3myhY29HpJmqdpsr5aKDHqRxkIKAfOjB40imhAXMnTwNN0PLXJ3LaKOuIHsUvnD7edb/nvJwO0IOLT2e5scMDRd1O0F57r836koSRo3No5PVUd8f1A2m/sS58h146PYQ9P9oZ/wwT5uc9hn17hLklUIsKxi5QWOn16OAe2OEWJ7WiHThDyOiWyk8JDujmI23zFMGT9CcRfHuE+fcERzNoY7C93Gt9TO6J1EeJXRzq2Yt9/T8l9X7iFTn0BDi4PBn+6mNO37cxNsxXpEfvYY0PiL2xbHWEO1sx0Vl59YzdBwObLj+zhoUNMk8CMIeKSTDMgcTlvAthZv4HbsPm2msJ3etDeB4JLmhFej0Ijvt7fnjI8c66K9XZnY+lXl73XbRfe31X7gN1ea3NtER6S7pQepgaQ/cDSYBucNrMCt08eI1vnaZHcx1v02maRFlWeVNCnWVYcwENVG1ZQtnkecJlUoo6r6DICt5ybLK6ki0vkWpAplWG/HBLHjtwclcfGflhE+4WX8wYtjrq9LcnP7569/Lim8t3v/z0/RumoOs8EyCvWLCzNw4Hyw63in1pFf0esp3TARdU+tWSnWNgHYIPC1JpqztcIzuawyDMbYId2Mzic7RWZVnKkzIrUoVCqDRvyK8Cy6TmMoeiKkUpklbkSc7rOhVYC8FLKXgtoADelI+sfeKlf6qtK5LaQbfwm9hjGIfFuH2+LVdMexZgvdj3fTadSXuHrB8DiA7Z72OWpAWj/OQsMDV2Hb3HvteBnb988TnagqS4ko3MqxwQsJVcViBE2TZNRR+eJRTJ87SpRcubimwpCk4IyNs8abPkv7VlTzOmP395ZcfwfFv8L03JZJ02ZSLapq2bNFeVJJOySqq2Qq4KkdUgkhyEhKzkQBapLOEqV2mTVnla1fP/0vvbvwCJyc+MnQkAAA==\",\"tool_name\":\"actionsplane\"}",
+    "truncated": false
+  },
+  "response": {
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4977",
+      "x-ratelimit-reset": "1784887800",
+      "x-github-request-id": "EA56:228C03:3A4E85:520526:6A632EA1"
+    },
+    "body": "{\"id\":\"1281eb60-8741-11f1-9e07-85e1a5bee05a\",\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/code-scanning/sarifs/1281eb60-8741-11f1-9e07-85e1a5bee05a\"}",
+    "truncated": false
+  }
+}

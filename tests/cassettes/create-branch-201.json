@@ -1,0 +1,27 @@
+{
+  "method": "POST",
+  "url": "https://api.github.com/repos/shpak-e/ap-lab-messy/git/refs",
+  "status": 201,
+  "request": {
+    "headers": {
+      "accept": "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json"
+    },
+    "body": "{\"ref\":\"refs/heads/actionsplane/pin-shas-1\",\"sha\":\"710c8cca65c454d4e6adae97fe0280483efda88a\"}",
+    "truncated": false
+  },
+  "response": {
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "etag": "\"7102c1e112dc1a13872c99a503fd565faad0583bd1fd3e204bdf31680e6952e8\"",
+      "location": "https://api.github.com/repos/shpak-e/ap-lab-messy/git/refs/heads/actionsplane/pin-shas-1",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4973",
+      "x-ratelimit-reset": "1784887800",
+      "x-github-request-id": "EA8F:37F5DA:3E5C98:56151C:6A632EBA"
+    },
+    "body": "{\"ref\":\"refs/heads/actionsplane/pin-shas-1\",\"node_id\":\"REF_kwDOThuHd9oAInJlZnMvaGVhZHMvYWN0aW9uc3BsYW5lL3Bpbi1zaGFzLTE\",\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/refs/heads/actionsplane/pin-shas-1\",\"object\":{\"sha\":\"710c8cca65c454d4e6adae97fe0280483efda88a\",\"type\":\"commit\",\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/commits/710c8cca65c454d4e6adae97fe0280483efda88a\"}}",
+    "truncated": false
+  }
+}

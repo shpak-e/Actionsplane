@@ -1,0 +1,25 @@
+{
+  "method": "PUT",
+  "url": "https://api.github.com/repos/shpak-e/ap-lab-messy/contents/.github/workflows/ci.yml",
+  "status": 403,
+  "request": {
+    "headers": {
+      "accept": "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "content-type": "application/json"
+    },
+    "body": "{\"message\":\"ci: pin-shas-1 — .github/workflows/ci.yml\",\"content\":\"bmFtZTogY2kKb246CiAgcHVzaDoKICBzY2hlZHVsZToKICAgIC0gY3JvbjogIjE3IDQgKiAqIDEiCmpvYnM6CiAgYnVpbGQ6CiAgICBydW5zLW9uOiB1YnVudHUtbGF0ZXN0CiAgICBzdGVwczoKICAgICAgLSB1c2VzOiBhY3Rpb25zL2NoZWNrb3V0QDExZDU5NjBhMzI2NzUwZDU4MzgwNzhlMzZjZjM4Yjg1YWY2NzcyNjIgICMgdjQKICAgICAgLSB1c2VzOiBhc3RyYWwtc2gvc2V0dXAtdXZAZDRiMmYzYjZlY2M2ZTY3YzQ0NTdmNmQzZTQxZWM0MmQzZDBmY2I4NiAgIyB2NQogICAgICAtIHJ1bjogZWNobyAiYnVpbGRpbmcgYXAtbGFiLW1lc3N5IgojIEFjdGlvbnNQbGFuZSBsaXZlLXZhbGlkYXRpb24gU3RhZ2UgQSB0cmlnZ2VyIDIwMjYtMDctMjRUMDk6MTJaCg==\",\"branch\":\"actionsplane/pin-shas-1\",\"sha\":\"1bbe36e8681c27c00b00cda5d3ab8f736903323f\"}",
+    "truncated": false
+  },
+  "response": {
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4972",
+      "x-ratelimit-reset": "1784887800",
+      "x-github-request-id": "EA8F:37F5DA:3E5CD4:561572:6A632EBB"
+    },
+    "body": "{\"message\":\"Resource not accessible by integration\",\"documentation_url\":\"https://docs.github.com/rest/repos/contents#create-or-update-file-contents\",\"status\":\"403\"}",
+    "truncated": false
+  }
+}

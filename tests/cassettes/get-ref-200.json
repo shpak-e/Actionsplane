@@ -1,0 +1,25 @@
+{
+  "method": "GET",
+  "url": "https://api.github.com/repos/shpak-e/ap-lab-messy/git/ref/heads/main",
+  "status": 200,
+  "request": {
+    "headers": {
+      "accept": "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28"
+    },
+    "body": null,
+    "truncated": false
+  },
+  "response": {
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "etag": "W/\"ac3d71216822e6339c451c86a2155784546b692bbae6676a612bc65aa913964a\"",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4978",
+      "x-ratelimit-reset": "1784887800",
+      "x-github-request-id": "EA56:228C03:3A4E6A:520507:6A632EA1"
+    },
+    "body": "{\"ref\":\"refs/heads/main\",\"node_id\":\"REF_kwDOThuHd69yZWZzL2hlYWRzL21haW4\",\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/refs/heads/main\",\"object\":{\"sha\":\"710c8cca65c454d4e6adae97fe0280483efda88a\",\"type\":\"commit\",\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/commits/710c8cca65c454d4e6adae97fe0280483efda88a\"}}",
+    "truncated": false
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "method": "GET",
+  "url": "https://api.github.com/repos/shpak-e/ap-lab-messy/contents/.github/workflows",
+  "status": 304,
+  "request": {
+    "headers": {
+      "accept": "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28",
+      "if-none-match": "\"93d9c2ea6e4678bbb4c2c56b2473ac3b3386d61b\""
+    },
+    "body": null,
+    "truncated": false
+  },
+  "response": {
+    "headers": {
+      "etag": "\"93d9c2ea6e4678bbb4c2c56b2473ac3b3386d61b\"",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4965",
+      "x-ratelimit-reset": "1784887800",
+      "x-github-request-id": "ECB9:12E3C1:3C6456:544DE2:6A63306A"
+    },
+    "body": null,
+    "truncated": false
+  }
+}

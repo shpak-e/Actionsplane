@@ -1,0 +1,25 @@
+{
+  "method": "GET",
+  "url": "https://api.github.com/repos/shpak-e/ap-lab-messy/contents/.github/workflows/ci.yml",
+  "status": 200,
+  "request": {
+    "headers": {
+      "accept": "application/vnd.github+json",
+      "x-github-api-version": "2022-11-28"
+    },
+    "body": null,
+    "truncated": false
+  },
+  "response": {
+    "headers": {
+      "content-type": "application/json; charset=utf-8",
+      "etag": "\"1bbe36e8681c27c00b00cda5d3ab8f736903323f\"",
+      "x-ratelimit-limit": "5000",
+      "x-ratelimit-remaining": "4958",
+      "x-ratelimit-reset": "1784887800",
+      "x-github-request-id": "ECD8:2C7507:3DA145:5589EA:6A633070"
+    },
+    "body": "{\"name\":\"ci.yml\",\"path\":\".github/workflows/ci.yml\",\"sha\":\"1bbe36e8681c27c00b00cda5d3ab8f736903323f\",\"size\":288,\"url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/contents/.github/workflows/ci.yml?ref=main\",\"html_url\":\"https://github.com/shpak-e/ap-lab-messy/blob/main/.github/workflows/ci.yml\",\"git_url\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/blobs/1bbe36e8681c27c00b00cda5d3ab8f736903323f\",\"download_url\":\"https://raw.githubusercontent.com/shpak-e/ap-lab-messy/main/.github/workflows/ci.yml\",\"type\":\"file\",\"content\":\"bmFtZTogY2kKb246CiAgcHVzaDoKICBzY2hlZHVsZToKICAgIC0gY3Jvbjog\\nIjE3IDQgKiAqIDEiCmpvYnM6CiAgYnVpbGQ6CiAgICBydW5zLW9uOiB1YnVu\\ndHUtbGF0ZXN0CiAgICBzdGVwczoKICAgICAgLSB1c2VzOiBhY3Rpb25zL2No\\nZWNrb3V0QHY0CiAgICAgIC0gdXNlczogYXN0cmFsLXNoL3NldHVwLXV2QHY1\\nCiAgICAgIC0gcnVuOiBlY2hvICJidWlsZGluZyBhcC1sYWItbWVzc3kiCiMg\\nQWN0aW9uc1BsYW5lIGxpdmUtdmFsaWRhdGlvbiBTdGFnZSBBIHRyaWdnZXIg\\nMjAyNi0wNy0yNFQwOToxMloK\\n\",\"encoding\":\"base64\",\"_links\":{\"self\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/contents/.github/workflows/ci.yml?ref=main\",\"git\":\"https://api.github.com/repos/shpak-e/ap-lab-messy/git/blobs/1bbe36e8681c27c00b00cda5d3ab8f736903323f\",\"html\":\"https://github.com/shpak-e/ap-lab-messy/blob/main/.github/workflows/ci.yml\"}}",
+    "truncated": false
+  }
+}

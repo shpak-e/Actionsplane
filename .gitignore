@@ -46,3 +46,6 @@ deploy/**/*.html
 
 # OS
 .DS_Store
+
+# Live-validation raw cassette dumps (curated subset committed separately)
+tests/cassettes/raw/
