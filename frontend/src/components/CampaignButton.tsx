@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useHasOperateToken } from "../lib/auth";
+import { promptForToken, useHasOperateToken } from "../lib/auth";
+import { operationLabel } from "../lib/labels";
 import { useRepos } from "../hooks/useRepos";
 import { ExternalLink, IconArrowRight, IconCheck, IconExternal, IconX } from "./ui";
 
@@ -60,14 +61,14 @@ export function CampaignButton({
       <button
         ref={btnRef}
         className="btn sm primary"
-        onClick={() => (pos ? setPos(null) : open())}
-        disabled={!hasToken || repoIds.length === 0}
+        onClick={() => (!hasToken ? promptForToken() : pos ? setPos(null) : open())}
+        disabled={repoIds.length === 0}
         title={
           !hasToken
-            ? "Set an operate token first"
+            ? "Set an operate token to run this fix"
             : repoIds.length === 0
               ? "No fixable repos"
-              : `${label} across ${repoIds.length} repo(s)`
+              : `${label} across ${repoIds.length} repo(s) · ${operationLabel(operation)}`
         }
       >
         {label}
@@ -79,7 +80,7 @@ export function CampaignButton({
             <div className="fix-scrim" onClick={() => setPos(null)} />
             <div className="fix-pop campaign-pop" role="dialog" style={{ top: pos.top, left: pos.left }}>
               <div className="settings-label">
-                {operation} · {repoIds.length} repo{repoIds.length === 1 ? "" : "s"}
+                {operationLabel(operation)} · {repoIds.length} repo{repoIds.length === 1 ? "" : "s"}
               </div>
 
               {create.isPending && <p className="settings-hint">Computing dry-run diffs…</p>}

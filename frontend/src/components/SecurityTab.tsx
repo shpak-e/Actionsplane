@@ -95,7 +95,16 @@ export function SecurityTab({
 
             {total > 0 && (
               <>
-                <div className="sevbar">
+                <div
+                  className="sevbar"
+                  role="img"
+                  aria-label={
+                    "Severity mix: " +
+                    SEV_ORDER.filter((s) => (scorecard.by_severity[s] ?? 0) > 0)
+                      .map((s) => `${scorecard.by_severity[s]} ${s}`)
+                      .join(", ")
+                  }
+                >
                   {SEV_ORDER.map((s) => {
                     const n = scorecard.by_severity[s] ?? 0;
                     return n > 0 ? (
@@ -127,8 +136,8 @@ export function SecurityTab({
         <TableSkeleton />
       ) : findings.length === 0 ? (
         <EmptyState icon={<IconShield size={34} />} title="No open findings">
-          Clean — or no audit has run yet. The worker audits watched repos on a schedule; local
-          seed data includes a few sample findings.
+          Clean — or no audit has run yet. ActionsPlane audits watched repositories automatically
+          on a schedule and after every push.
         </EmptyState>
       ) : (
         <div className="table-wrap">

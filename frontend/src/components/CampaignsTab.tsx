@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useHasOperateToken } from "../lib/auth";
 import { useRepos } from "../hooks/useRepos";
 import { relativeTime } from "../lib/format";
+import { operationLabel } from "../lib/labels";
 import {
   EmptyState,
   ErrorBanner,
@@ -123,8 +124,10 @@ function CampaignDetail({ id, onClose }: { id: number; onClose: () => void }) {
           </button>
           <div style={{ minWidth: 0 }}>
             <h2>{data?.name ?? "Campaign"}</h2>
-            <div className="sub mono">
-              {data ? `${data.operation} · ${targets.length} target${targets.length === 1 ? "" : "s"}` : "loading…"}
+            <div className="sub">
+              {data
+                ? `${operationLabel(data.operation)} · ${targets.length} target${targets.length === 1 ? "" : "s"}`
+                : "loading…"}
             </div>
           </div>
         </div>
@@ -240,7 +243,7 @@ export function CampaignsTab() {
                   <td>
                     <span style={{ color: "var(--fg)", fontWeight: 500 }}>{c.name}</span>
                   </td>
-                  <td className="mono muted">{c.operation}</td>
+                  <td className="muted" title={c.operation}>{operationLabel(c.operation)}</td>
                   <td className="muted">
                     {c.targets} repo{c.targets === 1 ? "" : "s"}
                     {c.opened > 0 && <span className="ct-ok mono"> · {c.opened} PR</span>}

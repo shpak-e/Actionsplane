@@ -7,6 +7,10 @@ export type RailTab<T extends string> = {
   label: string;
   icon: ReactNode;
   count?: number;
+  /** One-line description shown as the button tooltip (demystifies "Radar", "Drift", …). */
+  hint?: string;
+  /** Section header this tab sits under (e.g. "Observe", "Audit"). */
+  group?: string;
 };
 
 /** The fast-forward run-fleet mark: three run triangles, the lead one in the accent color. */
@@ -49,19 +53,28 @@ export function NavRail<T extends string>({
         <Mark />
       </div>
       <nav className="rail-nav">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            className={active === t.id ? "rail-btn active" : "rail-btn"}
-            onClick={() => onSelect(t.id)}
-            aria-current={active === t.id}
-            title={t.label}
-          >
-            {t.icon}
-            <span className="rail-label">{t.label}</span>
-            {t.count != null && t.count > 0 && <span className="rail-count">{t.count}</span>}
-          </button>
-        ))}
+        {tabs.map((t, i) => {
+          const newGroup = t.group && t.group !== tabs[i - 1]?.group;
+          return (
+            <div key={t.id} className="rail-item">
+              {newGroup && <div className="rail-group-label">{t.group}</div>}
+              <button
+                className={active === t.id ? "rail-btn active" : "rail-btn"}
+                onClick={() => onSelect(t.id)}
+                aria-current={active === t.id}
+                title={t.hint ? `${t.label} — ${t.hint}` : t.label}
+              >
+                {t.icon}
+                <span className="rail-label">{t.label}</span>
+                {t.count != null && t.count > 0 && (
+                  <span className="rail-count" title={`${t.count} need attention`}>
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            </div>
+          );
+        })}
       </nav>
 
       <div className="rail-spacer" />

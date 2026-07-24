@@ -105,10 +105,10 @@ export function PolicyTab() {
                   <div className="rule-fix">
                     {r.fix_operation ? (
                       <CampaignButton
-                        name={`policy fix: ${r.rule}`}
+                        name={`Fix: ${RULE_LABEL[r.rule] ?? r.rule}`}
                         operation={r.fix_operation}
                         repoIds={r.fixable_repo_ids}
-                        label={`Fix with ${r.fix_operation}`}
+                        label="Fix"
                       />
                     ) : (
                       <span className="subtle" style={{ fontSize: 12 }}>
