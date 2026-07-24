@@ -37,6 +37,8 @@ from actionsplane.db.models import (
     CampaignTarget,
     Installation,
     Lease,
+    NotificationChannel,
+    NotificationSent,
     ProcessedDelivery,
     Repo,
     TemplateBinding,
@@ -654,6 +656,49 @@ async def campaign_target_counts(
     )
     rows = await session.execute(stmt)
     return {cid: (total, op, err) for cid, total, op, err in rows}
+
+
+async def list_notification_channels(
+    session: AsyncSession, *, enabled_only: bool = False
+) -> list[NotificationChannel]:
+    stmt = select(NotificationChannel).order_by(NotificationChannel.id)
+    if enabled_only:
+        stmt = stmt.where(NotificationChannel.enabled.is_(True))
+    return list((await session.scalars(stmt)).all())
+
+
+async def get_notification_channel(
+    session: AsyncSession, channel_id: int
+) -> NotificationChannel | None:
+    return await session.get(NotificationChannel, channel_id)
+
+
+async def create_notification_channel(
+    session: AsyncSession, *, kind: str, name: str, config: dict, events: list[str]
+) -> NotificationChannel:
+    channel = NotificationChannel(
+        kind=kind,
+        name=name,
+        config=config,
+        events=events,
+        enabled=True,
+        created_at=datetime.now(UTC),
+    )
+    session.add(channel)
+    await session.flush()
+    return channel
+
+
+async def mark_notified(session: AsyncSession, event_key: str) -> bool:
+    """Claim ``event_key`` for a one-time alert. Returns True if this call claimed it (caller should
+    send), False if already claimed (skip — de-dupes re-seen findings / still-urgent radar)."""
+    stmt = (
+        _conflict_insert(session)(NotificationSent)
+        .values(event_key=event_key, sent_at=datetime.now(UTC))
+        .on_conflict_do_nothing(index_elements=["event_key"])
+        .returning(NotificationSent.event_key)
+    )
+    return (await session.execute(stmt)).first() is not None
 
 
 async def delivery_seen(session: AsyncSession, delivery_id: str) -> bool:

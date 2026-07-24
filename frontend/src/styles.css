@@ -691,3 +691,51 @@ td.actions .btn, td.actions .icon-btn { margin-left: 4px; }
 .customize-move .icon-btn { width: 24px; height: 24px; }
 .rot-up { transform: rotate(-90deg); }
 .rot-down { transform: rotate(90deg); }
+
+/* ---------- Settings section ---------- */
+.settings-layout { display: grid; grid-template-columns: 210px 1fr; gap: 20px; align-items: start; }
+.settings-nav { display: flex; flex-direction: column; gap: 3px; position: sticky; top: 0; }
+.settings-nav-item {
+  display: flex; flex-direction: column; gap: 1px; text-align: left;
+  padding: 9px 12px; border: 1px solid transparent; border-radius: var(--r-sm);
+  background: none; color: var(--fg-muted); cursor: pointer;
+}
+.settings-nav-item:hover { background: var(--surface-3); }
+.settings-nav-item.active { background: var(--accent-weak); border-color: var(--accent-weak-2); color: var(--accent); }
+.settings-nav-label { font-size: 13px; font-weight: 600; }
+.settings-nav-hint { font-size: 11px; color: var(--fg-subtle); }
+.settings-nav-item.active .settings-nav-hint { color: var(--accent); opacity: 0.75; }
+.settings-body { min-width: 0; }
+
+.settings-placeholder { padding: 28px 26px; text-align: center; display: flex; flex-direction: column; align-items: center; }
+.settings-placeholder-icon { color: var(--fg-faint); margin-bottom: 8px; }
+.settings-placeholder h3 { margin: 0; font-family: var(--font-display); font-size: 16px; color: var(--fg); }
+.settings-placeholder-body { max-width: 460px; }
+.settings-placeholder-body p { font-size: 12.5px; line-height: 1.6; }
+
+/* notifications */
+.notif-form { padding: 16px 18px; }
+.notif-form-grid { display: grid; grid-template-columns: 150px 1fr; gap: 12px 14px; }
+.notif-form-grid .notif-dest { grid-column: 1 / -1; }
+.notif-events { margin-top: 14px; }
+.notif-events-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px 16px; margin-top: 7px; }
+.event-toggle { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--fg-muted); cursor: pointer; }
+.notif-form-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
+
+.channel-list { display: flex; flex-direction: column; gap: 10px; }
+.channel-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 13px 16px; }
+.channel-row.off { opacity: 0.62; }
+.channel-main { min-width: 0; flex: 1; }
+.channel-head { display: flex; align-items: center; gap: 9px; }
+.channel-kind { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); background: var(--accent-weak); border-radius: var(--pill); padding: 2px 8px; }
+.channel-name { font-weight: 600; color: var(--fg); font-size: 13px; }
+.channel-dest { font-size: 11.5px; margin: 4px 0 8px; }
+.channel-events { display: flex; flex-wrap: wrap; gap: 5px; }
+.event-chip { font-size: 10.5px; color: var(--fg-muted); background: var(--surface-3); border: 1px solid var(--border); border-radius: var(--pill); padding: 2px 8px; }
+.channel-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; flex: 0 0 auto; }
+.btn.sm.danger { color: var(--fail); border-color: var(--fail-border); }
+.btn.sm.danger:hover { background: var(--fail-bg); }
+@media (max-width: 720px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { flex-direction: row; overflow-x: auto; position: static; }
+}

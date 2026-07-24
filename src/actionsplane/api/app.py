@@ -37,6 +37,11 @@ from actionsplane.api.schemas import (
     JobOut,
     MetricsOut,
     ModeOut,
+    NotificationChannelIn,
+    NotificationChannelOut,
+    NotificationChannelUpdate,
+    NotificationEventOut,
+    NotificationTestOut,
     PipelineGraphOut,
     PolicySimulateIn,
     RadarReportOut,
@@ -65,7 +70,9 @@ from actionsplane.db.repository import (
     count_open_findings_grouped,
     create_binding,
     create_campaign,
+    create_notification_channel,
     get_campaign,
+    get_notification_channel,
     get_repo,
     get_repo_by_owner_name,
     latest_runs_for,
@@ -74,6 +81,7 @@ from actionsplane.db.repository import (
     list_campaigns,
     list_failing_jobs,
     list_jobs,
+    list_notification_channels,
     list_repos,
     list_runs,
     list_targets,
@@ -97,6 +105,8 @@ from actionsplane.executor.operations import OPERATIONS
 from actionsplane.github.client import GitHubClient
 from actionsplane.governance.service import require_check_fleet
 from actionsplane.metrics import summarize_runs
+from actionsplane.notifications import EVENT_TYPES
+from actionsplane.notifications import send_test as send_test_notification
 from actionsplane.observability import instrument_fastapi, setup_tracing
 from actionsplane.offline import last_sync, sync_offline
 from actionsplane.offline.sync import OFFLINE_INSTALLATION_ID, sync_repo
@@ -793,6 +803,138 @@ async def get_campaign_endpoint(
     if campaign is None:
         raise HTTPException(404, "campaign not found")
     return await _campaign_out(session, campaign)
+
+
+def _mask_destination(kind: str, config: dict) -> str | None:
+    """A human hint at a channel's destination without leaking the secret (URL / recipient)."""
+    if kind in ("slack", "webhook"):
+        url = str((config or {}).get("url", ""))
+        if not url:
+            return None
+        tail = url.rstrip("/").rsplit("/", 1)[-1]
+        host = url.split("//", 1)[-1].split("/", 1)[0]
+        return f"{host}/…/{tail[-6:]}" if tail else host
+    if kind == "email":
+        to = str((config or {}).get("to", ""))
+        if "@" not in to:
+            return to or None
+        local, _, domain = to.partition("@")
+        return f"{local[:1]}***@{domain}"
+    return None
+
+
+def _channel_out(channel) -> NotificationChannelOut:
+    return NotificationChannelOut(
+        id=channel.id,
+        kind=channel.kind,
+        name=channel.name,
+        events=channel.events or [],
+        enabled=channel.enabled,
+        created_at=channel.created_at,
+        target_hint=_mask_destination(channel.kind, channel.config or {}),
+    )
+
+
+@router.get("/notifications/events", response_model=list[NotificationEventOut])
+async def list_notification_events() -> list[NotificationEventOut]:
+    """The event types a channel can subscribe to (for the settings UI)."""
+    return [
+        NotificationEventOut(type=t, label=meta["label"], description=meta["description"])
+        for t, meta in EVENT_TYPES.items()
+    ]
+
+
+@router.get("/notifications/channels", response_model=list[NotificationChannelOut])
+async def list_channels_endpoint(
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> list[NotificationChannelOut]:
+    """Configured alert channels (destinations masked). Operator-gated — reveals routing config."""
+    return [_channel_out(c) for c in await list_notification_channels(session)]
+
+
+@router.post("/notifications/channels", response_model=NotificationChannelOut, status_code=201)
+async def create_channel_endpoint(
+    body: NotificationChannelIn,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> NotificationChannelOut:
+    unknown = [e for e in body.events if e not in EVENT_TYPES]
+    if unknown:
+        raise HTTPException(422, f"unknown event type(s): {', '.join(unknown)}")
+    need = "to" if body.kind == "email" else "url"
+    if not str((body.config or {}).get(need, "")).strip():
+        raise HTTPException(422, f"{body.kind} channel requires config.{need}")
+    channel = await create_notification_channel(
+        session, kind=body.kind, name=body.name, config=body.config, events=body.events
+    )
+    await record_write_audit(
+        session, actor=actor, action="notification.create", target=f"channel:{channel.id}"
+    )
+    await session.commit()
+    return _channel_out(channel)
+
+
+@router.patch("/notifications/channels/{channel_id}", response_model=NotificationChannelOut)
+async def update_channel_endpoint(
+    channel_id: int,
+    body: NotificationChannelUpdate,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> NotificationChannelOut:
+    channel = await get_notification_channel(session, channel_id)
+    if channel is None:
+        raise HTTPException(404, "channel not found")
+    if body.events is not None:
+        unknown = [e for e in body.events if e not in EVENT_TYPES]
+        if unknown:
+            raise HTTPException(422, f"unknown event type(s): {', '.join(unknown)}")
+        channel.events = body.events
+    if body.name is not None:
+        channel.name = body.name.strip() or channel.name
+    if body.config is not None:
+        channel.config = body.config
+    if body.enabled is not None:
+        channel.enabled = body.enabled
+    await record_write_audit(
+        session, actor=actor, action="notification.update", target=f"channel:{channel.id}"
+    )
+    await session.commit()
+    return _channel_out(channel)
+
+
+@router.delete("/notifications/channels/{channel_id}")
+async def delete_channel_endpoint(
+    channel_id: int,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> dict:
+    channel = await get_notification_channel(session, channel_id)
+    if channel is None:
+        raise HTTPException(404, "channel not found")
+    await session.delete(channel)
+    await record_write_audit(
+        session, actor=actor, action="notification.delete", target=f"channel:{channel_id}"
+    )
+    await session.commit()
+    return {"status": "deleted", "channel_id": channel_id}
+
+
+@router.post("/notifications/channels/{channel_id}/test", response_model=NotificationTestOut)
+async def test_channel_endpoint(
+    channel_id: int,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> NotificationTestOut:
+    """Send a test alert to one channel now, surfacing any delivery error."""
+    channel = await get_notification_channel(session, channel_id)
+    if channel is None:
+        raise HTTPException(404, "channel not found")
+    try:
+        await send_test_notification(channel)
+        return NotificationTestOut(status="sent")
+    except Exception as exc:  # surface the delivery failure to the operator
+        return NotificationTestOut(status="error", detail=str(exc)[:300])
 
 
 @router.get("/audit-log", response_model=list[AuditLogEntryOut])

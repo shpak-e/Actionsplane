@@ -98,6 +98,27 @@ export interface Scorecard {
   score: number;
 }
 
+export interface NotificationEvent {
+  type: string;
+  label: string;
+  description: string;
+}
+
+export interface NotificationChannel {
+  id: number;
+  kind: string; // slack | webhook | email
+  name: string;
+  events: string[];
+  enabled: boolean;
+  created_at: string | null;
+  target_hint: string | null;
+}
+
+export interface NotificationTest {
+  status: string; // "sent" | "error"
+  detail: string | null;
+}
+
 export interface Template {
   id: number;
   name: string;

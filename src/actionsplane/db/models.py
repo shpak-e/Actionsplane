@@ -244,3 +244,31 @@ class Lease(Base):
     name: Mapped[str] = mapped_column(String(64), primary_key=True)  # e.g. "sweep:reconcile"
     holder: Mapped[str] = mapped_column(String(255))  # host:pid of the claiming worker
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class NotificationChannel(Base):
+    """A destination alerts are routed to (Slack / generic webhook / email) plus which event
+    types it subscribes to. Secrets (webhook URL, recipient) live in ``config``; the API masks
+    them on read."""
+
+    __tablename__ = "notification_channels"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    kind: Mapped[str] = mapped_column(String(16))  # slack | webhook | email
+    name: Mapped[str] = mapped_column(String(255))
+    config: Mapped[dict] = mapped_column(JSONB)  # {"url": ...} | {"to": ...}
+    events: Mapped[list] = mapped_column(JSONB)  # subscribed event-type strings
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class NotificationSent(Base):
+    """Idempotency ledger so an event fires an alert exactly once (a finding re-seen every audit,
+    a deprecation still urgent every sweep). Keyed by a stable per-event key."""
+
+    __tablename__ = "notification_sent"
+
+    event_key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
