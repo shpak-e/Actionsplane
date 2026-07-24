@@ -244,6 +244,22 @@ def add_concurrency(
     )
 
 
+def sync_to_template(
+    text: str, resolver: ShaResolver | None = None, *, params: dict | None = None
+) -> EditResult:
+    """Replace a drifted workflow with its canonical template (the Drift → Act path).
+
+    ``params["canonical_yaml"]`` carries the template body (from the binding's drift detail); this
+    op overwrites the file with it verbatim. Deliberately whole-file, not a structural merge — the
+    diff the reviewer sees in the PR is exactly the drift, and applying it makes the file identical
+    to the template. Scoped to the single bound file by ``params["path"]`` in the dry-run layer, so
+    it never stamps the template over other workflows. No-op if the file already matches."""
+    canonical = (params or {}).get("canonical_yaml")
+    if not canonical or canonical == text:
+        return EditResult(new_text=text, changes=[])
+    return EditResult(new_text=canonical, changes=["sync workflow to canonical template"])
+
+
 # Operation registry — name -> callable(text, resolver=None, *, params=None) -> EditResult
 OPERATIONS: dict[str, Callable[..., EditResult]] = {
     "pin-shas": pin_workflow_to_sha,
@@ -251,4 +267,5 @@ OPERATIONS: dict[str, Callable[..., EditResult]] = {
     "swap-runs-on": swap_runs_on,
     "bump-action-version": bump_action_version,
     "add-concurrency": add_concurrency,
+    "sync-template": sync_to_template,
 }

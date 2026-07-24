@@ -27,7 +27,13 @@ log = logging.getLogger(__name__)
 # resolution. Dispatch is guarded rather than assumed (review §4 L-1: a campaign must never silently
 # run one operation under another's label) — an unimplemented op raises instead of falling through.
 _PIN_OP = "pin-shas"
-_PARAM_OPS = {"set-permissions", "swap-runs-on", "bump-action-version"}
+_PARAM_OPS = {
+    "set-permissions",
+    "swap-runs-on",
+    "bump-action-version",
+    "add-concurrency",
+    "sync-template",
+}
 _DRY_RUN_SUPPORTED = {_PIN_OP} | _PARAM_OPS
 
 
@@ -94,7 +100,12 @@ async def dry_run_repo(
     edit_fn = OPERATIONS[operation]
     accumulated: dict[tuple[str, str, str], str] = dict(resolved or {})
     edits: list[FileEdit] = []
+    # Path-scoped ops (e.g. sync-template, which replaces one bound file with its canonical
+    # template) pass params["path"]; only that file is touched. Fleet ops leave it unset.
+    only_path = (params or {}).get("path")
     for path in await gh.list_workflow_files(owner, repo):
+        if only_path and path != only_path:
+            continue
         f = await gh.get_file(owner, repo, path)
         # Only pin-shas needs tag→SHA resolution; the parameterised ops rewrite purely from params.
         if operation == _PIN_OP and resolved is None:

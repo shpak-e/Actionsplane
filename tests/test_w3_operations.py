@@ -8,6 +8,7 @@ from actionsplane.executor.operations import (
     bump_action_version,
     set_workflow_permissions,
     swap_runs_on,
+    sync_to_template,
 )
 
 WF_NO_PERMS = """name: ci
@@ -124,3 +125,31 @@ def test_add_concurrency_custom_params():
     res = add_concurrency(WF_NO_PERMS, params={"group": "deploy", "cancel_in_progress": False})
     assert "group: deploy" in res.new_text
     assert "cancel-in-progress: false" in res.new_text
+
+
+# --- sync-template ----------------------------------------------------------------------------
+CANONICAL = """name: ci
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: make ci
+"""
+
+
+def test_sync_template_replaces_with_canonical():
+    res = sync_to_template(WF_NO_PERMS, params={"canonical_yaml": CANONICAL})
+    assert res.changed is True
+    assert res.new_text == CANONICAL
+    assert res.changes == ["sync workflow to canonical template"]
+
+
+def test_sync_template_noop_when_already_matching():
+    res = sync_to_template(CANONICAL, params={"canonical_yaml": CANONICAL})
+    assert res.changed is False
+
+
+def test_sync_template_noop_without_canonical():
+    assert sync_to_template(WF_NO_PERMS).changed is False
+    assert "sync-template" in OPERATIONS
