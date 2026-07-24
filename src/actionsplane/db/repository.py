@@ -218,6 +218,42 @@ async def list_all_workflows(session: AsyncSession) -> list[Workflow]:
     return list((await session.scalars(select(Workflow))).all())
 
 
+async def fleet_cost_records(
+    session: AsyncSession, *, since: datetime | None = None
+) -> list[dict[str, Any]]:
+    """Lightweight per-run records across the whole fleet for the cost/time view — derives run
+    duration + queue time in SQL projection (no ``raw_payload``). The endpoint groups these by
+    workflow to rank the longest-running / most-expensive workflows."""
+    stmt = select(
+        WorkflowRun.workflow_id,
+        WorkflowRun.repo_id,
+        WorkflowRun.conclusion,
+        WorkflowRun.created_at,
+        WorkflowRun.started_at,
+        WorkflowRun.completed_at,
+    ).where(WorkflowRun.workflow_id.is_not(None))
+    if since is not None:
+        stmt = stmt.where(WorkflowRun.created_at >= since)
+    out: list[dict[str, Any]] = []
+    for row in (await session.execute(stmt)).all():
+        duration_s = queue_s = None
+        if row.started_at and row.completed_at:
+            duration_s = (row.completed_at - row.started_at).total_seconds()
+        if row.created_at and row.started_at:
+            queue_s = (row.started_at - row.created_at).total_seconds()
+        out.append(
+            {
+                "workflow_id": row.workflow_id,
+                "repo_id": row.repo_id,
+                "conclusion": row.conclusion,
+                "duration_s": duration_s,
+                "queue_s": queue_s,
+                "created_at": row.created_at,
+            }
+        )
+    return out
+
+
 class LatestRun(NamedTuple):
     """The few run columns the Pipelines graph needs — deliberately *not* the whole ORM row, so
     the heavy ``raw_payload`` JSONB is never fetched for a status annotation (Phase 5.3 / review 3).

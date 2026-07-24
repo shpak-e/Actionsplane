@@ -2,10 +2,15 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useHasOperateToken, promptForToken } from "../lib/auth";
-import { EmptyState, ErrorBanner, IconCheck, IconX, TableSkeleton } from "./ui";
+import { ChannelLogo, EmptyState, ErrorBanner, IconCheck, IconX, TableSkeleton } from "./ui";
 import type { NotificationChannel } from "../types";
 
 const KIND_LABEL: Record<string, string> = { slack: "Slack", webhook: "Webhook", email: "Email" };
+const KINDS: { id: string; label: string }[] = [
+  { id: "slack", label: "Slack" },
+  { id: "webhook", label: "Webhook" },
+  { id: "email", label: "Email" },
+];
 const DEST_FIELD: Record<string, { key: "url" | "to"; label: string; placeholder: string }> = {
   slack: { key: "url", label: "Slack Incoming Webhook URL", placeholder: "https://hooks.slack.com/services/…" },
   webhook: { key: "url", label: "Webhook URL", placeholder: "https://example.com/hooks/actionsplane" },
@@ -30,8 +35,9 @@ function ChannelRow({ channel, eventLabels }: { channel: NotificationChannel; ev
     <div className={channel.enabled ? "card channel-row" : "card channel-row off"}>
       <div className="channel-main">
         <div className="channel-head">
-          <span className="channel-kind">{KIND_LABEL[channel.kind] ?? channel.kind}</span>
+          <ChannelLogo kind={channel.kind} size={17} />
           <span className="channel-name">{channel.name}</span>
+          <span className="channel-kind">{KIND_LABEL[channel.kind] ?? channel.kind}</span>
           {!channel.enabled && <span className="badge neutral">disabled</span>}
         </div>
         <div className="channel-dest mono subtle">{channel.target_hint ?? "—"}</div>
@@ -123,22 +129,38 @@ export function NotificationsPanel() {
       </p>
 
       <div className="card notif-form">
+        <div className="notif-kind-picker">
+          {KINDS.map((k) => (
+            <button
+              key={k.id}
+              type="button"
+              className={kind === k.id ? "notif-kind active" : "notif-kind"}
+              onClick={() => setKind(k.id)}
+            >
+              <ChannelLogo kind={k.id} size={22} />
+              <span>{k.label}</span>
+            </button>
+          ))}
+        </div>
+
         <div className="notif-form-grid">
-          <label className="field">
-            Type
-            <select className="input" value={kind} onChange={(e) => setKind(e.target.value)}>
-              <option value="slack">Slack</option>
-              <option value="webhook">Generic webhook</option>
-              <option value="email">Email</option>
-            </select>
+          <label className="ffield">
+            <span className="ffield-label">Name</span>
+            <input
+              className="settings-input"
+              value={name}
+              placeholder="e.g. #platform-alerts"
+              onChange={(e) => setName(e.target.value)}
+            />
           </label>
-          <label className="field">
-            Name
-            <input className="input" value={name} placeholder="e.g. #platform-alerts" onChange={(e) => setName(e.target.value)} />
-          </label>
-          <label className="field notif-dest">
-            {field.label}
-            <input className="input" value={dest} placeholder={field.placeholder} onChange={(e) => setDest(e.target.value)} />
+          <label className="ffield">
+            <span className="ffield-label">{field.label}</span>
+            <input
+              className="settings-input"
+              value={dest}
+              placeholder={field.placeholder}
+              onChange={(e) => setDest(e.target.value)}
+            />
           </label>
         </div>
 

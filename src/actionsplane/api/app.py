@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
@@ -34,6 +35,8 @@ from actionsplane.api.schemas import (
     DriftDetailOut,
     FindingOut,
     FindingsPage,
+    FleetCostOut,
+    FleetCostRow,
     JobOut,
     MetricsOut,
     ModeOut,
@@ -71,6 +74,7 @@ from actionsplane.db.repository import (
     create_binding,
     create_campaign,
     create_notification_channel,
+    fleet_cost_records,
     get_campaign,
     get_notification_channel,
     get_repo,
@@ -105,6 +109,7 @@ from actionsplane.executor.operations import OPERATIONS
 from actionsplane.github.client import GitHubClient
 from actionsplane.governance.service import require_check_fleet
 from actionsplane.metrics import summarize_runs
+from actionsplane.metrics.compute import percentile
 from actionsplane.notifications import EVENT_TYPES
 from actionsplane.notifications import send_test as send_test_notification
 from actionsplane.notifications.service import safe_error, validate_destination
@@ -375,6 +380,52 @@ async def get_workflow_metrics(
 ) -> MetricsOut:
     records = await metrics_records(session, workflow_id=workflow_id, limit=limit)
     return MetricsOut(**asdict(summarize_runs(records)))
+
+
+@router.get("/metrics/fleet", response_model=FleetCostOut)
+async def fleet_cost_metrics(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=500),
+    session: AsyncSession = Depends(get_session),
+) -> FleetCostOut:
+    """Fleet cost/time rollup: per-workflow total run-minutes (the compute-cost proxy), run count,
+    failures, p95 duration and queue time over the last ``days`` — ranked most-expensive first."""
+    since = datetime.now(UTC) - timedelta(days=days)
+    records = await fleet_cost_records(session, since=since)
+    workflows = {w.id: w for w in await list_all_workflows(session)}
+    repos = {r.id: f"{r.owner}/{r.name}" for r in await list_repos(session, watched_only=False)}
+
+    by_wf: dict[int, list[dict]] = defaultdict(list)
+    for rec in records:
+        by_wf[rec["workflow_id"]].append(rec)
+
+    rows: list[FleetCostRow] = []
+    fleet_total = 0.0
+    for wid, recs in by_wf.items():
+        durs = [x["duration_s"] for x in recs if x["duration_s"] is not None]
+        queues = [x["queue_s"] for x in recs if x["queue_s"] is not None]
+        total_s = sum(durs)
+        fleet_total += total_s
+        wf = workflows.get(wid)
+        name = (wf.name or wf.path.rsplit("/", 1)[-1]) if wf else str(wid)
+        rows.append(
+            FleetCostRow(
+                workflow_id=wid,
+                repo=repos.get(wf.repo_id) if wf else None,
+                name=name,
+                runs=len(recs),
+                failures=sum(1 for x in recs if x["conclusion"] == "failure"),
+                total_minutes=round(total_s / 60, 1),
+                avg_duration_s=round(total_s / len(durs), 1) if durs else None,
+                p95_duration_s=percentile(durs, 95),
+                p95_queue_s=percentile(queues, 95),
+                last_run_at=max((x["created_at"] for x in recs if x["created_at"]), default=None),
+            )
+        )
+    rows.sort(key=lambda r: r.total_minutes, reverse=True)
+    return FleetCostOut(
+        window_days=days, total_minutes=round(fleet_total / 60, 1), rows=rows[:limit]
+    )
 
 
 @router.get("/findings", response_model=FindingsPage)

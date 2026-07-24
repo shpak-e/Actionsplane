@@ -48,6 +48,46 @@ function computeLayers(ids: string[], edges: PipelineEdge[]): Map<string, number
   return layer; // nodes inside a cycle keep layer 0 (rare; degrades to a single column)
 }
 
+/** Root (no upstream) and leaf (no downstream) nodes within a component — its entry/exit points. */
+function endpoints(ids: string[], edges: PipelineEdge[]) {
+  const idSet = new Set(ids);
+  const hasIn = new Set<string>();
+  const hasOut = new Set<string>();
+  for (const e of edges) {
+    if (idSet.has(e.source) && idSet.has(e.target) && e.source !== e.target) {
+      hasOut.add(e.source);
+      hasIn.add(e.target);
+    }
+  }
+  return {
+    roots: ids.filter((id) => !hasIn.has(id)),
+    leaves: ids.filter((id) => !hasOut.has(id)),
+  };
+}
+
+/** A one-line human summary of a pipeline: a name (entry → exit), repo span, and rolled-up health. */
+function summarizePipeline(ids: string[], edges: PipelineEdge[], nodesById: Map<string, PipelineNode>) {
+  const nodes = ids.map((id) => nodesById.get(id)!).filter(Boolean);
+  const { roots, leaves } = endpoints(ids, edges);
+  const nm = (id: string) => nodesById.get(id)?.name ?? id;
+  const left = (roots.length ? roots : [ids[0]]).map(nm);
+  const right = (leaves.length ? leaves : [ids[ids.length - 1]]).map(nm);
+  const title =
+    left.join(", ") === right.join(", ") ? left.join(", ") : `${left.join(", ")} → ${right.join(", ")}`;
+  const repos = new Set(nodes.map((n) => n.repo));
+  const failing = nodes.find((n) => n.conclusion === "failure");
+  const running = nodes.some((n) => n.status === "in_progress");
+  const anyRun = nodes.some((n) => n.conclusion || n.status);
+  const health = failing
+    ? { label: "failing", cls: "fail" }
+    : running
+      ? { label: "running", cls: "running" }
+      : anyRun
+        ? { label: "passing", cls: "ok" }
+        : { label: "no recent runs", cls: "neutral" };
+  return { title, repos, crossRepo: repos.size > 1, health, failing };
+}
+
 // Map a node's latest-run outcome to a status pill {label, css class}. Null for external/unobserved.
 function nodeStatus(node: PipelineNode): { label: string; cls: string } | null {
   if (node.conclusion) {
@@ -297,6 +337,14 @@ export function PipelinesTab() {
         </EmptyState>
       ) : (
         <>
+          <div className="card pflow-intro">
+            A <strong>pipeline</strong> is a chain of workflows wired together — one workflow’s run
+            kicks off another (<span className="mono">workflow_run</span>), or a job pulls in a
+            reusable workflow (<span className="mono">uses:</span>). Each box is a workflow; follow
+            the arrows left→right to see what runs after what, and where a chain crosses between
+            repos. Use it to spot a broken hand-off or an unexpected cross-repo dependency.
+          </div>
+
           <div className="pflow-legend card">
             <div className="pflow-legend-group">
               <span className="pflow-legend-title">Repos</span>
@@ -325,13 +373,24 @@ export function PipelinesTab() {
             {pipelines.map((ids, i) => {
               const idSet = new Set(ids);
               const linkCount = edges.filter((e) => idSet.has(e.source) && idSet.has(e.target)).length;
+              const s = summarizePipeline(ids, edges, nodesById);
               return (
                 <div className="card pipeline" key={i}>
                   <div className="pipeline-head">
-                    Pipeline {i + 1}
-                    <span className="subtle">
-                      {" "}
-                      · {ids.length} workflows · {linkCount} link{linkCount === 1 ? "" : "s"}
+                    <span className="pipeline-title mono">{s.title}</span>
+                    <span className={`badge ${s.health.cls}`}>{s.health.label}</span>
+                    <span className="subtle pipeline-meta">
+                      {ids.length} workflow{ids.length === 1 ? "" : "s"} ·{" "}
+                      {s.repos.size} repo{s.repos.size === 1 ? "" : "s"}
+                      {s.crossRepo && <span className="pipeline-xrepo"> cross-repo</span>} ·{" "}
+                      {linkCount} link{linkCount === 1 ? "" : "s"}
+                      {s.failing && (
+                        <span className="pipeline-fail">
+                          {" "}
+                          · ✕ {s.failing.name}
+                          {s.failing.failed_step ? ` (${s.failing.failed_step})` : ""}
+                        </span>
+                      )}
                     </span>
                   </div>
                   <PipelineFlow
