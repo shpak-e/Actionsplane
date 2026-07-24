@@ -624,9 +624,36 @@ async def get_campaign(session: AsyncSession, campaign_id: int) -> Campaign | No
     return await session.get(Campaign, campaign_id)
 
 
+async def list_campaigns(session: AsyncSession, *, limit: int = 100) -> list[Campaign]:
+    """Campaigns newest-first, for the Campaigns tab list view."""
+    stmt = select(Campaign).order_by(Campaign.created_at.desc(), Campaign.id.desc()).limit(limit)
+    return list((await session.scalars(stmt)).all())
+
+
 async def list_targets(session: AsyncSession, *, campaign_id: int) -> list[CampaignTarget]:
     stmt = select(CampaignTarget).where(CampaignTarget.campaign_id == campaign_id)
     return list((await session.scalars(stmt)).all())
+
+
+async def campaign_target_counts(
+    session: AsyncSession, campaign_ids: list[int]
+) -> dict[int, tuple[int, int, int]]:
+    """Per-campaign ``(total, opened, errored)`` target counts in one grouped query (no N+1).
+
+    ``opened`` = targets that reached an opened PR (``pr_number`` set); ``errored`` = targets
+    carrying an error. Campaigns with no targets are simply absent from the returned map.
+    """
+    if not campaign_ids:
+        return {}
+    opened = func.count(CampaignTarget.pr_number)  # COUNT ignores NULLs → only opened PRs
+    errored = func.count(CampaignTarget.error)
+    stmt = (
+        select(CampaignTarget.campaign_id, func.count(), opened, errored)
+        .where(CampaignTarget.campaign_id.in_(campaign_ids))
+        .group_by(CampaignTarget.campaign_id)
+    )
+    rows = await session.execute(stmt)
+    return {cid: (total, op, err) for cid, total, op, err in rows}
 
 
 async def delivery_seen(session: AsyncSession, delivery_id: str) -> bool:

@@ -174,6 +174,20 @@ export const BrandPipelines = ({ size = 20, className }: IconProps) =>
     </>,
   );
 
+// Campaigns — a fleet-wide edit fanning out from one source to many repos, lead target in ember.
+export const BrandCampaigns = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <path d="M6 12 L16 6 M6 12 L16 12 M6 12 L16 18" stroke="currentColor" strokeWidth="2" />
+      <circle cx="5" cy="12" r="2.2" stroke="currentColor" strokeWidth="2" />
+      <circle cx="18" cy="6" r="2.1" stroke="currentColor" strokeWidth="2" />
+      <circle cx="18" cy="12" r="2.1" fill="var(--accent)" />
+      <circle cx="18" cy="18" r="2.1" stroke="currentColor" strokeWidth="2" />
+    </>,
+  );
+
 /* ---------- run status badge ---------- */
 
 export function StatusBadge({ run }: { run: Run }) {

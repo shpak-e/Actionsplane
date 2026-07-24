@@ -285,7 +285,21 @@ class CampaignOut(BaseModel):
     name: str
     operation: str
     status: str
+    created_at: datetime | None = None
     targets: list[CampaignTargetOut] = []
+
+
+class CampaignSummaryOut(BaseModel):
+    """Lightweight campaign row for the Campaigns list (counts instead of full target diffs)."""
+
+    id: int
+    name: str
+    operation: str
+    status: str
+    created_at: datetime | None = None
+    targets: int  # total target repos
+    opened: int  # targets that reached an opened PR
+    errored: int  # targets that failed
 
 
 class AuditLogEntryOut(BaseModel):

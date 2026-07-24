@@ -192,7 +192,19 @@ export interface Campaign {
   name: string;
   operation: string;
   status: string;
+  created_at: string | null;
   targets: CampaignTarget[];
+}
+
+export interface CampaignSummary {
+  id: number;
+  name: string;
+  operation: string;
+  status: string;
+  created_at: string | null;
+  targets: number;
+  opened: number;
+  errored: number;
 }
 
 export interface PipelineNode {

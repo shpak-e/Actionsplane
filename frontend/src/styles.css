@@ -528,6 +528,22 @@ td.actions .btn, td.actions .icon-btn { margin-left: 4px; }
 .diff-line.add .diff-gutter, .diff-line.add .diff-text { color: var(--ok); }
 .diff-line.del { background: var(--fail-bg); }
 .diff-line.del .diff-gutter, .diff-line.del .diff-text { color: var(--fail); }
+.diff-line.meta { background: var(--accent-weak); }
+.diff-line.meta .diff-text { color: var(--fg-subtle); }
+.diff-line.ctx .diff-text { color: var(--fg-muted); }
+
+/* ---------- campaigns tab ---------- */
+.campaign-detail-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 10px; font-size: 12.5px; }
+.campaign-target-list { display: flex; flex-direction: column; gap: 8px; }
+.campaign-target { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+.campaign-target .ct-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; background: none; border: none; text-align: left; color: inherit; font: inherit; }
+.campaign-target .ct-head:hover { background: var(--surface-3); }
+.campaign-target .ct-repo { color: var(--fg); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-target .ct-right { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.campaign-target .ct-ok { color: var(--ok); }
+.campaign-target .ct-err { color: var(--fail); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.campaign-target .diff { max-height: 340px; border-top: 1px solid var(--border); }
+.campaign-target .diff-line { padding-left: 8px; }
 
 .toast { margin-top: 12px; padding: 10px 12px; border-radius: var(--r-sm); font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .toast.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-border); }

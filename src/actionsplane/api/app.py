@@ -29,6 +29,7 @@ from actionsplane.api.schemas import (
     BindingOut,
     CampaignCreate,
     CampaignOut,
+    CampaignSummaryOut,
     CampaignTargetOut,
     DriftDetailOut,
     FindingOut,
@@ -59,6 +60,7 @@ from actionsplane.audit.scorecard import build_scorecard
 from actionsplane.config import get_settings
 from actionsplane.db.base import get_session, get_sessionmaker
 from actionsplane.db.repository import (
+    campaign_target_counts,
     count_open_findings,
     count_open_findings_grouped,
     create_binding,
@@ -69,6 +71,7 @@ from actionsplane.db.repository import (
     latest_runs_for,
     list_all_workflows,
     list_bindings,
+    list_campaigns,
     list_failing_jobs,
     list_jobs,
     list_repos,
@@ -690,8 +693,35 @@ async def _campaign_out(session: AsyncSession, campaign) -> CampaignOut:
         name=campaign.name,
         operation=campaign.operation,
         status=campaign.status,
+        created_at=campaign.created_at,
         targets=[CampaignTargetOut.model_validate(t, from_attributes=True) for t in targets],
     )
+
+
+@router.get("/campaigns", response_model=list[CampaignSummaryOut])
+async def list_campaigns_endpoint(
+    limit: int = Query(100, le=500, ge=1),
+    session: AsyncSession = Depends(get_session),
+) -> list[CampaignSummaryOut]:
+    """All campaigns newest-first, with per-campaign target counts (for the Campaigns tab list)."""
+    campaigns = await list_campaigns(session, limit=limit)
+    counts = await campaign_target_counts(session, [c.id for c in campaigns])
+    out: list[CampaignSummaryOut] = []
+    for c in campaigns:
+        total, opened, errored = counts.get(c.id, (0, 0, 0))
+        out.append(
+            CampaignSummaryOut(
+                id=c.id,
+                name=c.name,
+                operation=c.operation,
+                status=c.status,
+                created_at=c.created_at,
+                targets=total,
+                opened=opened,
+                errored=errored,
+            )
+        )
+    return out
 
 
 @router.post("/campaigns", response_model=CampaignOut, status_code=201)
