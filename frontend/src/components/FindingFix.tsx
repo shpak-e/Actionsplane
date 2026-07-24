@@ -23,10 +23,12 @@ const REMEDIATION: Record<string, { title: string; steps: string; op?: string }>
     title: "Set least-privilege permissions",
     steps:
       "Add a top-level permissions: block (e.g. contents: read) so GITHUB_TOKEN doesn't fall back to the repo default (often write-all).",
+    op: "set-permissions",
   },
   broad_permissions: {
     title: "Narrow the permissions",
     steps: "Replace write-all / broad scopes with only the permissions the workflow actually uses.",
+    op: "set-permissions",
   },
   deprecated_action: {
     title: "Upgrade the action",
@@ -119,7 +121,7 @@ export function FindingFix({ finding }: { finding: Finding }) {
                     onClick={() => fix.mutate()}
                     title={hasToken ? "Open a pull request that applies the fix" : "Set an operate token first"}
                   >
-                    <IconArrowRight /> {fix.isPending ? "Opening PR…" : "Open fix PR (pin SHAs)"}
+                    <IconArrowRight /> {fix.isPending ? "Opening PR…" : "Open fix PR"}
                   </button>
                   {!hasToken && (
                     <p className="settings-hint">Set an operate token (key icon) to open fix PRs.</p>

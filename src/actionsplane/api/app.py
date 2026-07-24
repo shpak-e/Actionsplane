@@ -675,7 +675,7 @@ async def create_campaign_endpoint(
         session,
         name=body.name,
         operation=body.operation,
-        params=None,
+        params=body.params,
         repo_ids=body.repo_ids,
         created_by="api",
     )
@@ -684,7 +684,12 @@ async def create_campaign_endpoint(
         actor=actor,
         action="campaign.create",
         target=f"campaign:{campaign.id}",
-        detail={"name": body.name, "operation": body.operation, "repo_ids": body.repo_ids},
+        detail={
+            "name": body.name,
+            "operation": body.operation,
+            "repo_ids": body.repo_ids,
+            "params": body.params,
+        },
     )
     await session.commit()
     await run_dry_run(session, campaign)

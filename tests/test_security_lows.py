@@ -22,11 +22,12 @@ def test_campaign_operation_accepts_known_shape():
 
 @pytest.mark.asyncio
 async def test_dry_run_rejects_unimplemented_operation():
-    # A registry-known-but-unimplemented op must raise, never silently fall through to pin-shas.
+    # An operation without a dry-run path must raise, never silently fall through to pin-shas.
+    # ``inject-step`` is the one W3 op not yet implemented end-to-end.
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200))) as c:
         gh = GitHubClient("tok", client=c, api_url="https://api.github.com")
         with pytest.raises(NotImplementedError):
-            await dry_run_repo(gh, "acme", "infra", operation="set-permissions")
+            await dry_run_repo(gh, "acme", "infra", operation="inject-step")
 
 
 # --- L-2: AST-based pin resolver --------------------------------------------------------------

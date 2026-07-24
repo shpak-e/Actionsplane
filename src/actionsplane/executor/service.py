@@ -22,11 +22,13 @@ from actionsplane.models.enums import PinState
 
 log = logging.getLogger(__name__)
 
-# Operations whose full dry-run path (ref resolution + rewrite) is implemented here. The registry
-# in operations.py may list more rewrite callables than have an end-to-end dry-run, so dispatch is
-# guarded rather than assumed (review §4 L-1: a campaign must never silently run pin-shas under
-# another operation's label).
-_DRY_RUN_SUPPORTED = {"pin-shas"}
+# Operations whose full dry-run path is implemented here. ``pin-shas`` resolves tag→SHA against the
+# action repos; the parameterised ops (W3) rewrite purely from campaign ``params`` and need no
+# resolution. Dispatch is guarded rather than assumed (review §4 L-1: a campaign must never silently
+# run one operation under another's label) — an unimplemented op raises instead of falling through.
+_PIN_OP = "pin-shas"
+_PARAM_OPS = {"set-permissions", "swap-runs-on", "bump-action-version"}
+_DRY_RUN_SUPPORTED = {_PIN_OP} | _PARAM_OPS
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +78,7 @@ async def dry_run_repo(
     *,
     operation: str = "pin-shas",
     resolved: dict[tuple[str, str, str], str] | None = None,
+    params: dict | None = None,
 ) -> tuple[list[FileEdit], dict[tuple[str, str, str], str]]:
     """Compute edits for ``operation`` across every workflow in a repo. No writes.
 
@@ -93,9 +96,14 @@ async def dry_run_repo(
     edits: list[FileEdit] = []
     for path in await gh.list_workflow_files(owner, repo):
         f = await gh.get_file(owner, repo, path)
-        if resolved is None:
+        # Only pin-shas needs tag→SHA resolution; the parameterised ops rewrite purely from params.
+        if operation == _PIN_OP and resolved is None:
             accumulated.update(await _resolve_pin_refs(gh, f["text"], path))
-        result = edit_fn(f["text"], lambda o, r, ref, _m=accumulated: _m.get((o, r, ref)))
+        result = edit_fn(
+            f["text"],
+            lambda o, r, ref, _m=accumulated: _m.get((o, r, ref)),
+            params=params,
+        )
         if result.changed:
             edits.append(
                 FileEdit(
