@@ -164,6 +164,19 @@ export interface RadarReport {
   entries: RadarEntry[];
 }
 
+export interface RequireCheckResult {
+  repo_id: number;
+  repo: string | null;
+  status: string;
+  detail: string | null;
+  ruleset_id: number | null;
+}
+
+export interface RequireCheckOut {
+  check: string;
+  results: RequireCheckResult[];
+}
+
 export interface CampaignTarget {
   id: number;
   repo_id: number;

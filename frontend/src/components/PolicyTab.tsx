@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api";
 import { CampaignButton } from "./CampaignButton";
+import { RequireCheckPanel } from "./RequireCheckPanel";
 import { EmptyState, ErrorBanner, IconShield } from "./ui";
 import type { RuleImpact } from "../types";
 
@@ -121,6 +122,9 @@ export function PolicyTab() {
           )}
         </>
       )}
+
+      <div className="policy-divider" />
+      <RequireCheckPanel />
     </section>
   );
 }

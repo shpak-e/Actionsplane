@@ -452,6 +452,14 @@ td.actions .btn, td.actions .icon-btn { margin-left: 4px; }
 .rule-impact { font-size: 12.5px; color: var(--fg-muted); margin-top: 3px; }
 .rule-impact strong { color: var(--fg); }
 
+.policy-divider { height: 1px; background: var(--border); margin: 22px 0; }
+.require-check { padding: 16px 18px; }
+.rc-form { display: flex; align-items: center; gap: 10px; }
+.rc-form .settings-input { width: 240px; margin-top: 0; }
+.rc-results { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.rc-results li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.rc-results .ct-name { color: var(--fg-muted); }
+
 /* campaign runner popover */
 .campaign-pop { width: 340px; }
 .campaign-targets { list-style: none; margin: 4px 0 6px; padding: 0; display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow-y: auto; }

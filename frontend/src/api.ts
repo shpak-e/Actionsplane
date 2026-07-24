@@ -10,6 +10,7 @@ import type {
   PipelineGraph,
   RadarReport,
   Repo,
+  RequireCheckOut,
   Run,
   Scorecard,
   SimulationReport,
@@ -106,4 +107,6 @@ export const api = {
     require_permissions: boolean;
   }) => post<SimulationReport>("/policy/simulate", body),
   radar: () => get<RadarReport>("/deprecations/radar"),
+  requireCheck: (body: { check: string; repo_ids: number[] }) =>
+    post<RequireCheckOut>("/governance/require-check", body),
 };
