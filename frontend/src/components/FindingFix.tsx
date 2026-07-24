@@ -45,6 +45,16 @@ const REMEDIATION: Record<string, { title: string; steps: string; op?: string }>
     steps:
       "Add a concurrency: block with cancel-in-progress so overlapping runs on the same ref can't race.",
   },
+  dangling_workflow_run: {
+    title: "Fix the workflow_run reference",
+    steps:
+      "This workflow_run trigger names an upstream workflow that doesn't exist in the repo, so it never fires. Match the name: field of the intended upstream workflow exactly, or remove the trigger.",
+  },
+  missing_reusable_workflow: {
+    title: "Restore the reusable workflow",
+    steps:
+      "This job calls a local reusable workflow file that isn't in the repo, so the job can't start. Add the missing .github/workflows file, or correct the uses: path.",
+  },
 };
 
 export function FindingFix({ finding }: { finding: Finding }) {
