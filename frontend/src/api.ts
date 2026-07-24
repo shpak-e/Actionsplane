@@ -2,6 +2,7 @@ import { getOperateToken } from "./lib/auth";
 import type {
   Binding,
   Campaign,
+  CampaignSummary,
   DriftDetail,
   Finding,
   Job,
@@ -100,6 +101,8 @@ export const api = {
     repo_ids: number[];
     params?: Record<string, unknown> | null;
   }) => post<Campaign>("/campaigns", body),
+  campaigns: () => get<CampaignSummary[]>("/campaigns"),
+  campaign: (id: number) => get<Campaign>(`/campaigns/${id}`),
   applyCampaign: (id: number) => post<Campaign>(`/campaigns/${id}/apply`),
   simulatePolicy: (body: {
     require_sha_pinned: boolean;

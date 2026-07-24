@@ -10,10 +10,12 @@ import { DriftTab } from "./components/DriftTab";
 import { PipelinesTab } from "./components/PipelinesTab";
 import { PolicyTab } from "./components/PolicyTab";
 import { RadarTab } from "./components/RadarTab";
+import { CampaignsTab } from "./components/CampaignsTab";
 import { ReposTab } from "./components/ReposTab";
 import { SyncButton } from "./components/SyncButton";
 import { SettingsMenu } from "./components/SettingsMenu";
 import {
+  BrandCampaigns,
   BrandDrift,
   BrandPipelines,
   BrandPolicy,
@@ -27,7 +29,7 @@ import { useMode } from "./hooks/useMode";
 import { useTheme } from "./hooks/useTheme";
 import type { Run } from "./types";
 
-type Tab = "runs" | "security" | "policy" | "radar" | "drift" | "pipelines" | "repos";
+type Tab = "runs" | "security" | "policy" | "radar" | "drift" | "pipelines" | "campaigns" | "repos";
 
 export default function App() {
   const [repoId, setRepoId] = useState<number | null>(null);
@@ -48,6 +50,7 @@ export default function App() {
     { id: "radar", label: "Radar", icon: <BrandRadar size={22} /> },
     { id: "drift", label: "Drift", icon: <BrandDrift size={22} /> },
     { id: "pipelines", label: "Pipelines", icon: <BrandPipelines size={22} /> },
+    { id: "campaigns", label: "Campaigns", icon: <BrandCampaigns size={22} /> },
     { id: "repos", label: "Repos", icon: <BrandRepos size={22} /> },
   ];
 
@@ -114,6 +117,7 @@ export default function App() {
             {tab === "radar" && <RadarTab />}
             {tab === "drift" && <DriftTab repoId={repoId} />}
             {tab === "pipelines" && <PipelinesTab />}
+            {tab === "campaigns" && <CampaignsTab />}
             {tab === "repos" && <ReposTab />}
           </main>
         </div>
