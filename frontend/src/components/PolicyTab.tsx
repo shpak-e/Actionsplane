@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { CampaignButton } from "./CampaignButton";
 import { RequireCheckPanel } from "./RequireCheckPanel";
-import { EmptyState, ErrorBanner, IconShield } from "./ui";
+import { EmptyState, ErrorBanner, IconCheck, IconShield } from "./ui";
 import type { RuleImpact } from "../types";
 
 const RULE_LABEL: Record<string, string> = {
@@ -11,6 +11,68 @@ const RULE_LABEL: Record<string, string> = {
   require_permissions: "Require a permissions block",
   disallowed_trigger: "Disallow risky triggers",
 };
+
+/** SHA-pin readiness — auto-runs on mount. GitHub's org "require SHA-pinned actions" policy has been
+ * GA since Aug 2025, and Dependabot/Renovate bump tags but can't pin to a SHA — so this is the one
+ * rule you can be forced to comply with *today* and no other tool remediates. Lead with it. */
+function ShaPinReadiness() {
+  const q = useQuery({
+    queryKey: ["policy", "sha-pin-readiness"],
+    queryFn: () =>
+      api.simulatePolicy({
+        require_sha_pinned: true,
+        require_permissions: false,
+        disallowed_triggers: [],
+      }),
+  });
+  const rule = q.data?.by_rule.find((r) => r.rule === "require_sha_pinned");
+  const unpinned = rule?.workflows ?? 0;
+  const repos = rule?.repos ?? 0;
+
+  return (
+    <div className={`card shapin-hero${unpinned > 0 ? " at-risk" : " clear"}`}>
+      <div className="shapin-badge">
+        {unpinned > 0 ? <IconShield size={20} /> : <IconCheck size={20} />}
+        <span>Enforceable today</span>
+      </div>
+      <div className="shapin-body">
+        {q.isLoading ? (
+          <div className="shapin-headline">Checking SHA-pin readiness…</div>
+        ) : unpinned > 0 ? (
+          <>
+            <div className="shapin-headline">
+              <strong>{unpinned}</strong> workflow{unpinned === 1 ? "" : "s"} across{" "}
+              <strong>{repos}</strong> repo{repos === 1 ? "" : "s"} use unpinned actions
+            </div>
+            <p className="shapin-note">
+              GitHub's org policy <em>“require actions pinned to a full-length commit SHA”</em> is GA
+              (Aug 2025) — turn it on and these fail immediately. Dependabot and Renovate bump tags but
+              <strong> can't pin to a SHA</strong>, so this is on you. One campaign fixes the whole fleet.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="shapin-headline">Every action in the fleet is SHA-pinned ✓</div>
+            <p className="shapin-note">
+              You can enable GitHub's “require SHA-pinned actions” org policy without breaking a single
+              workflow.
+            </p>
+          </>
+        )}
+      </div>
+      {unpinned > 0 && rule && (
+        <div className="shapin-cta">
+          <CampaignButton
+            name="Pin all actions to SHAs"
+            operation="pin-shas"
+            repoIds={rule.fixable_repo_ids}
+            label="Pin the fleet"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PolicyTab() {
   const [sha, setSha] = useState(true);
@@ -40,6 +102,8 @@ export function PolicyTab() {
           </div>
         </div>
       </div>
+
+      <ShaPinReadiness />
 
       <div className="card policy-form">
         <label className="policy-check">

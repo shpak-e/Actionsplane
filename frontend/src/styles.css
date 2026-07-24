@@ -848,3 +848,16 @@ th.cost-tip-col, td.cost-tip-col { width: 34px; padding-right: 0; }
 .activity-meta { display: flex; align-items: center; gap: 7px; margin-top: 3px; font-size: 12px; color: var(--fg-subtle); }
 .activity-actor { color: var(--fg-muted); }
 .activity-sep { color: var(--fg-faint); }
+
+/* ---------- SHA-pin readiness hero (Policy tab, roadmap N2) ---------- */
+.shapin-hero { display: flex; align-items: center; gap: 20px; padding: 18px 22px; margin-bottom: 16px; flex-wrap: wrap; }
+.shapin-hero.at-risk { border-left: 3px solid var(--warn, #d9a441); }
+.shapin-hero.clear { border-left: 3px solid var(--ok); }
+.shapin-badge { display: inline-flex; align-items: center; gap: 8px; flex: none; font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; padding: 6px 12px; border-radius: var(--pill); }
+.shapin-hero.at-risk .shapin-badge { color: var(--warn, #d9a441); background: color-mix(in srgb, var(--warn, #d9a441) 14%, transparent); }
+.shapin-hero.clear .shapin-badge { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.shapin-body { flex: 1; min-width: 240px; }
+.shapin-headline { font-size: 15px; color: var(--fg); }
+.shapin-headline strong { color: var(--fg); font-weight: 700; }
+.shapin-note { margin: 5px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--fg-muted); max-width: 62ch; }
+.shapin-cta { flex: none; }
