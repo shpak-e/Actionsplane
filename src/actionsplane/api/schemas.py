@@ -230,6 +230,9 @@ class CampaignCreate(BaseModel):
     name: str
     operation: str = "pin-shas"
     repo_ids: list[int]
+    # Operation parameters (W3): e.g. set-permissions {"permissions": {...}}, swap-runs-on
+    # {"from","to"}, bump-action-version {"action","to"}. pin-shas ignores this.
+    params: dict | None = None
 
     @field_validator("operation")
     @classmethod

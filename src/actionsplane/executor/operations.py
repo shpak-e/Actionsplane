@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap
 
 from actionsplane.audit.pins import classify
 from actionsplane.models.enums import PinState
@@ -93,7 +94,9 @@ def _pin_steps(steps, resolver: ShaResolver, changes: list[str]) -> None:
         changes.append(f"{ref} → {u.owner}/{u.repo}{sub}@{sha[:12]}…  # {u.ref}")
 
 
-def pin_workflow_to_sha(text: str, resolver: ShaResolver) -> EditResult:
+def pin_workflow_to_sha(
+    text: str, resolver: ShaResolver | None = None, *, params: dict | None = None
+) -> EditResult:
     """Pin all mutable action refs in a workflow to commit SHAs (round-trip preserving)."""
     yaml = _rt_yaml()
     data = yaml.load(io.StringIO(text))
@@ -101,13 +104,113 @@ def pin_workflow_to_sha(text: str, resolver: ShaResolver) -> EditResult:
     if data and "jobs" in data:
         for job in data["jobs"].values():
             if hasattr(job, "get") and "steps" in job:
-                _pin_steps(job["steps"], resolver, changes)
+                _pin_steps(job["steps"], resolver or (lambda *_: None), changes)
     out = io.StringIO()
     yaml.dump(data, out)
     return EditResult(new_text=out.getvalue(), changes=changes)
 
 
-# Operation registry — name -> callable(text, resolver) -> EditResult
+def _iter_jobs(data):
+    """Yield (job_id, job) for each mapping job (skips non-mapping / malformed entries)."""
+    for jid, job in (data.get("jobs") or {}).items() if data else []:
+        if hasattr(job, "get"):
+            yield jid, job
+
+
+def set_workflow_permissions(
+    text: str, resolver: ShaResolver | None = None, *, params: dict | None = None
+) -> EditResult:
+    """Set a top-level ``permissions:`` block (default least-privilege ``contents: read``).
+
+    Fixes both *missing* permissions (adds the block, inserted right after ``on:`` so the diff reads
+    naturally) and *broad* permissions (replaces ``write-all`` / over-scoped grants). ``params`` may
+    carry ``{"permissions": {...}}`` for a specific scope map. Idempotent — an already-matching
+    block is left untouched (no-op, empty diff).
+    """
+    desired = (params or {}).get("permissions") or {"contents": "read"}
+    yaml = _rt_yaml()
+    data = yaml.load(io.StringIO(text))
+    if not data:
+        return EditResult(new_text=text, changes=[])
+    if data.get("permissions") == desired:
+        return EditResult(new_text=text, changes=[])
+
+    block = CommentedMap()
+    for k, v in desired.items():
+        block[k] = v
+    if "permissions" in data:
+        data["permissions"] = block
+    else:
+        keys = list(data.keys())
+        pos = next((keys.index(a) + 1 for a in ("on", "name") if a in keys), 0)
+        data.insert(pos, "permissions", block)
+
+    desc = ", ".join(f"{k}: {v}" for k, v in desired.items())
+    out = io.StringIO()
+    yaml.dump(data, out)
+    return EditResult(new_text=out.getvalue(), changes=[f"set workflow permissions ({desc})"])
+
+
+def swap_runs_on(
+    text: str, resolver: ShaResolver | None = None, *, params: dict | None = None
+) -> EditResult:
+    """Replace a ``runs-on`` label across all jobs (default ubuntu-22.04 → ubuntu-24.04, the W8
+    brownout migration). Handles both the scalar (``runs-on: ubuntu-22.04``) and list
+    (``runs-on: [self-hosted, ubuntu-22.04]``) forms; ``params`` overrides via ``{"from","to"}``."""
+    src = (params or {}).get("from") or "ubuntu-22.04"
+    dst = (params or {}).get("to") or "ubuntu-24.04"
+    yaml = _rt_yaml()
+    data = yaml.load(io.StringIO(text))
+    changes: list[str] = []
+    for jid, job in _iter_jobs(data):
+        ro = job.get("runs-on")
+        if isinstance(ro, str) and ro == src:
+            job["runs-on"] = dst
+            changes.append(f"job `{jid}`: runs-on {src} → {dst}")
+        elif isinstance(ro, list):
+            for i, label in enumerate(ro):
+                if label == src:
+                    ro[i] = dst
+                    changes.append(f"job `{jid}`: runs-on label {src} → {dst}")
+    out = io.StringIO()
+    yaml.dump(data, out)
+    return EditResult(new_text=out.getvalue(), changes=changes)
+
+
+def bump_action_version(
+    text: str, resolver: ShaResolver | None = None, *, params: dict | None = None
+) -> EditResult:
+    """Bump every ``uses:`` of a given action to a target ref (e.g. actions/setup-node → v4).
+
+    ``params`` must carry ``{"action": "owner/repo", "to": "v4"}``; without them it's a no-op. The
+    subpath (``owner/repo/dir@ref``) and any trailing comment are preserved. For deprecated-action
+    findings and the Deprecation Radar's version migrations."""
+    action = ((params or {}).get("action") or "").strip().lower()
+    dst = (params or {}).get("to")
+    yaml = _rt_yaml()
+    data = yaml.load(io.StringIO(text))
+    changes: list[str] = []
+    if not action or not dst:
+        return EditResult(new_text=text, changes=[])
+    for _jid, job in _iter_jobs(data):
+        for step in job.get("steps") or []:
+            if not hasattr(step, "get") or "uses" not in step:
+                continue
+            ref = step["uses"]
+            u = classify(ref)
+            if u.owner and u.repo and f"{u.owner}/{u.repo}".lower() == action and u.ref != dst:
+                sub = f"/{u.subpath}" if u.subpath else ""
+                step["uses"] = f"{u.owner}/{u.repo}{sub}@{dst}"
+                changes.append(f"{ref} → {u.owner}/{u.repo}{sub}@{dst}")
+    out = io.StringIO()
+    yaml.dump(data, out)
+    return EditResult(new_text=out.getvalue(), changes=changes)
+
+
+# Operation registry — name -> callable(text, resolver=None, *, params=None) -> EditResult
 OPERATIONS: dict[str, Callable[..., EditResult]] = {
     "pin-shas": pin_workflow_to_sha,
+    "set-permissions": set_workflow_permissions,
+    "swap-runs-on": swap_runs_on,
+    "bump-action-version": bump_action_version,
 }
