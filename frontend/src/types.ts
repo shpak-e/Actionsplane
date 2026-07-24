@@ -104,6 +104,27 @@ export interface NotificationEvent {
   description: string;
 }
 
+export interface OpenApiParameter {
+  name: string;
+  in: string;
+  required?: boolean;
+  schema?: { type?: string };
+}
+
+export interface OpenApiOperation {
+  summary?: string;
+  description?: string;
+  tags?: string[];
+  parameters?: OpenApiParameter[];
+  requestBody?: { content?: Record<string, unknown> };
+  responses?: Record<string, { description?: string }>;
+}
+
+export interface OpenApiDoc {
+  info?: { title?: string; version?: string };
+  paths: Record<string, Record<string, OpenApiOperation>>;
+}
+
 export interface NotificationChannel {
   id: number;
   kind: string; // slack | webhook | email

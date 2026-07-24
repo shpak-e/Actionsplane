@@ -835,6 +835,13 @@ def _channel_out(channel) -> NotificationChannelOut:
     )
 
 
+@router.get("/meta/openapi")
+async def meta_openapi(request: Request) -> dict:
+    """The OpenAPI schema, so the in-product Docs tab can render an API reference from the live app
+    (always in sync with the deployed endpoints — no separate doc to drift)."""
+    return request.app.openapi()
+
+
 @router.get("/notifications/events", response_model=list[NotificationEventOut])
 async def list_notification_events() -> list[NotificationEventOut]:
     """The event types a channel can subscribe to (for the settings UI)."""

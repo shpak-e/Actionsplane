@@ -11,6 +11,7 @@ import type {
   NotificationChannel,
   NotificationEvent,
   NotificationTest,
+  OpenApiDoc,
   PipelineGraph,
   RadarReport,
   Repo,
@@ -142,4 +143,5 @@ export const api = {
   ) => patch<NotificationChannel>(`/notifications/channels/${id}`, body),
   deleteChannel: (id: number) => del<{ status: string; channel_id: number }>(`/notifications/channels/${id}`),
   testChannel: (id: number) => post<NotificationTest>(`/notifications/channels/${id}/test`),
+  openapi: () => get<OpenApiDoc>("/meta/openapi"),
 };

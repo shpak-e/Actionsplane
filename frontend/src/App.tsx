@@ -13,6 +13,7 @@ import { PolicyTab } from "./components/PolicyTab";
 import { RadarTab } from "./components/RadarTab";
 import { CampaignsTab } from "./components/CampaignsTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { DocsTab } from "./components/DocsTab";
 import { SyncButton } from "./components/SyncButton";
 import { SettingsMenu } from "./components/SettingsMenu";
 import {
@@ -22,6 +23,7 @@ import {
   BrandPipelines,
   BrandPolicy,
   BrandRadar,
+  BrandDocs,
   BrandRuns,
   BrandSecurity,
   BrandSettings,
@@ -45,7 +47,8 @@ type Tab =
   | "drift"
   | "pipelines"
   | "campaigns"
-  | "settings";
+  | "settings"
+  | "docs";
 
 export default function App() {
   const [repoId, setRepoId] = useState<number | null>(null);
@@ -136,6 +139,13 @@ export default function App() {
       icon: <BrandSettings size={22} />,
       group: "Manage",
       hint: "Notifications, repositories, and access control",
+    },
+    {
+      id: "docs",
+      label: "Docs",
+      icon: <BrandDocs size={22} />,
+      group: "Manage",
+      hint: "Usage guide and API reference",
     },
   ];
 
@@ -257,6 +267,7 @@ export default function App() {
             {tab === "pipelines" && <PipelinesTab />}
             {tab === "campaigns" && <CampaignsTab />}
             {tab === "settings" && <SettingsTab />}
+            {tab === "docs" && <DocsTab />}
           </main>
         </div>
       </div>
