@@ -40,6 +40,8 @@ from actionsplane.api.schemas import (
     RadarReportOut,
     RepoOut,
     RunOut,
+    SarifIngestIn,
+    SarifIngestOut,
     ScorecardOut,
     SimulationReportOut,
     TemplateCreate,
@@ -47,6 +49,7 @@ from actionsplane.api.schemas import (
     WorkflowOut,
 )
 from actionsplane.audit.deprecation_radar import scan_fleet
+from actionsplane.audit.sarif_ingest_service import ingest_sarif
 from actionsplane.audit.sarif_service import upload_sarif_for_repo
 from actionsplane.audit.scorecard import build_scorecard
 from actionsplane.config import get_settings
@@ -326,6 +329,30 @@ async def upload_repo_sarif_endpoint(
     )
     await session.commit()
     return {"status": "sarif-uploaded", "analysis_url": str(result.get("url", ""))}
+
+
+@router.post("/repos/{repo_id}/sarif/ingest", response_model=SarifIngestOut)
+async def ingest_repo_sarif_endpoint(
+    repo_id: int,
+    body: SarifIngestIn,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> SarifIngestOut:
+    """Ingest an external scanner's SARIF (zizmor/poutine/Scorecard) as findings (D1).
+
+    Operate token only (read token → 403); audited. Lifecycle is per-tool, so this never disturbs
+    ActionsPlane's native findings or another scanner's.
+    """
+    result = await ingest_sarif(session, repo_id=repo_id, doc=body.sarif)
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="sarif.ingest",
+        target=f"repo:{repo_id}",
+        detail=result,
+    )
+    await session.commit()
+    return SarifIngestOut(**result)
 
 
 @router.get("/repos/{repo_id}/findings", response_model=list[FindingOut])
