@@ -48,12 +48,22 @@ def test_small_sample_does_not_flag_failures():
 
 def test_queue_offers_concurrency_fix_only_when_missing():
     with_block = cost_suggestions(
-        runs=10, failures=0, total_minutes=20, p95_duration_s=60,
-        p95_queue_s=300, fleet_minutes=1000, has_concurrency=True,
+        runs=10,
+        failures=0,
+        total_minutes=20,
+        p95_duration_s=60,
+        p95_queue_s=300,
+        fleet_minutes=1000,
+        has_concurrency=True,
     )
     without_block = cost_suggestions(
-        runs=10, failures=0, total_minutes=20, p95_duration_s=60,
-        p95_queue_s=300, fleet_minutes=1000, has_concurrency=False,
+        runs=10,
+        failures=0,
+        total_minutes=20,
+        p95_duration_s=60,
+        p95_queue_s=300,
+        fleet_minutes=1000,
+        has_concurrency=False,
     )
     q_with = next(s for s in with_block if s.kind == "queue")
     q_without = next(s for s in without_block if s.kind == "queue")
