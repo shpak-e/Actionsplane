@@ -37,6 +37,11 @@ class FindingType(StrEnum):
     DEPRECATED_ACTION = "deprecated_action"
     DANGEROUS_SECRET_FLOW = "dangerous_secret_flow"
     MISSING_CONCURRENCY = "missing_concurrency"
+    # Dangling references — a workflow points at something that doesn't exist in the repo, so the
+    # trigger/call silently never fires (a real, invisible failure mode). Detected at the repo level
+    # (needs the full set of the repo's workflows), not per-workflow.
+    DANGLING_WORKFLOW_RUN = "dangling_workflow_run"
+    MISSING_REUSABLE_WORKFLOW = "missing_reusable_workflow"
 
 
 class DriftSeverity(StrEnum):

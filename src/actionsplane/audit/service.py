@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from actionsplane.audit.dangling import detect_dangling_references
 from actionsplane.audit.engine import audit_workflow
 from actionsplane.audit.immutable import resolve_immutable_refs
 from actionsplane.audit.parser import parse_workflow
@@ -67,10 +68,13 @@ async def _audit_repo(
     seen: set[str] = set()
     written = 0
     high_alerts: list[dict] = []  # critical/high findings to alert on after the commit
+    relation_items: list[dict] = []  # for the repo-level dangling-reference pass
     for path, wf in parsed:
+        descriptor = extract_relations(wf)
         await upsert_workflow_relation(
-            session, repo_id=repo.id, path=path, name=wf.name, descriptor=extract_relations(wf)
+            session, repo_id=repo.id, path=path, name=wf.name, descriptor=descriptor
         )
+        relation_items.append({"path": path, "name": wf.name, "descriptor": descriptor})
         for finding in audit_workflow(
             wf, publisher_allowlist=publisher_allowlist, immutable_refs=immutable_refs
         ):
@@ -80,6 +84,19 @@ async def _audit_repo(
             written += 1
             if str(row.get("severity", "")).lower() in ("critical", "high"):
                 high_alerts.append(row)
+
+    # Repo-level pass: dangling workflow_run / missing local reusable-workflow references (needs the
+    # full set of this repo's workflows). Same lifecycle as engine findings — resolves when fixed.
+    for path, finding in detect_dangling_references(relation_items):
+        row = finding.as_row(repo_id=repo.id, path=path)
+        if row["fingerprint"] in seen:
+            continue
+        seen.add(row["fingerprint"])
+        await upsert_finding(session, row)
+        written += 1
+        if str(row.get("severity", "")).lower() in ("critical", "high"):
+            high_alerts.append(row)
+
     await resolve_stale_findings(session, repo_id=repo.id, seen_fingerprints=seen)
     await session.commit()
 
