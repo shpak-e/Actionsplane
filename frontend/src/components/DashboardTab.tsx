@@ -22,7 +22,7 @@ const WIDGET_META: Record<WidgetId, { title: string; tab: string }> = {
   runs: { title: "Recent runs", tab: "runs" },
   campaigns: { title: "Campaigns", tab: "campaigns" },
   pipelines: { title: "Pipelines", tab: "pipelines" },
-  fleet: { title: "Fleet", tab: "repos" },
+  fleet: { title: "Fleet", tab: "settings" },
 };
 
 function Metric({ value, label, tone }: { value: React.ReactNode; label: string; tone?: string }) {

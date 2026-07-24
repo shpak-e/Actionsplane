@@ -81,6 +81,17 @@ class Settings(BaseSettings):
     # unless the operator wants the Security-tab integration.
     security_events_enabled: bool = False
 
+    # --- Notifications (Slack / generic webhook / email) ---
+    # Channels + event subscriptions live in the DB; these are the process-level bits: a global
+    # kill-switch and the SMTP transport for email channels (webhook/Slack need no server config).
+    notifications_enabled: bool = True
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = Field(default=None, repr=False)
+    smtp_password: str | None = Field(default=None, repr=False)
+    smtp_from: str | None = None  # From: address; defaults to smtp_username when unset
+    smtp_use_tls: bool = True  # STARTTLS
+
     # --- HTTP / API surface ---
     # /pipelines rebuilds the whole fleet graph per request; a short in-process TTL cache absorbs
     # repeated views (tab switches, multiple dashboards) without staleness mattering (review §5 M5).

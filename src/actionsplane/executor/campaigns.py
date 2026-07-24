@@ -18,6 +18,7 @@ from actionsplane.db.models import Campaign
 from actionsplane.db.repository import get_repo, list_targets
 from actionsplane.executor.service import dry_run_repo, open_pr_for_edits
 from actionsplane.github.factory import TokenCache, app_jwt, client_for_installation
+from actionsplane.notifications import dispatch_once
 
 # campaign.params resolved-map (de)serialization — JSONB needs string-friendly entries
 _KEYSEP = "\t"
@@ -115,4 +116,22 @@ async def apply_campaign(session, campaign: Campaign) -> Campaign:
                 target.status, target.error = "conflict", str(exc)[:500]
     campaign.status = "applied"
     await session.commit()
+
+    # Alert operators that a fleet fix landed (once per campaign apply).
+    targets = await list_targets(session, campaign_id=campaign.id)
+    opened = [t for t in targets if t.pr_url]
+    errored = [t for t in targets if t.status == "conflict"]
+    link = opened[0].pr_url if opened else None
+    body = (
+        f"Campaign “{campaign.name}” ({campaign.operation}) applied: "
+        f"{len(opened)} PR(s) opened" + (f", {len(errored)} failed" if errored else "") + "."
+    )
+    await dispatch_once(
+        session,
+        f"campaign:{campaign.id}",
+        "campaign.pr",
+        title="Fix campaign applied",
+        body=body,
+        link=link,
+    )
     return campaign

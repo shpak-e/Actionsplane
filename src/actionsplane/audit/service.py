@@ -19,6 +19,7 @@ from actionsplane.db.repository import (
     upsert_workflow_relation,
 )
 from actionsplane.github.client import GitHubClient
+from actionsplane.notifications import dispatch_once
 from actionsplane.observability import span
 from actionsplane.relations import extract_relations
 
@@ -65,6 +66,7 @@ async def _audit_repo(
     # Phase 2 — DB writes only (connection checked out here, released on commit).
     seen: set[str] = set()
     written = 0
+    high_alerts: list[dict] = []  # critical/high findings to alert on after the commit
     for path, wf in parsed:
         await upsert_workflow_relation(
             session, repo_id=repo.id, path=path, name=wf.name, descriptor=extract_relations(wf)
@@ -76,6 +78,20 @@ async def _audit_repo(
             seen.add(row["fingerprint"])
             await upsert_finding(session, row)
             written += 1
+            if str(row.get("severity", "")).lower() in ("critical", "high"):
+                high_alerts.append(row)
     await resolve_stale_findings(session, repo_id=repo.id, seen_fingerprints=seen)
     await session.commit()
+
+    # Notify on new critical/high findings (deduped by fingerprint, so once per finding — not
+    # every audit). Done after the commit so a delivery hiccup can't roll back the audit.
+    slug = f"{repo.owner}/{repo.name}"
+    for row in high_alerts:
+        await dispatch_once(
+            session,
+            f"finding:{row['fingerprint']}",
+            "finding.high",
+            title=f"{str(row['severity']).title()} finding — {slug}",
+            body=f"{row['message']} ({row.get('path') or '?'})",
+        )
     return written

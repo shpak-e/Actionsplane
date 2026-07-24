@@ -8,6 +8,9 @@ import type {
   Job,
   Metrics,
   Mode,
+  NotificationChannel,
+  NotificationEvent,
+  NotificationTest,
   PipelineGraph,
   RadarReport,
   Repo,
@@ -42,6 +45,21 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function patch<T>(path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { ...(authHeaders() as Record<string, string>) };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PATCH",
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -114,4 +132,14 @@ export const api = {
   radar: () => get<RadarReport>("/deprecations/radar"),
   requireCheck: (body: { check: string; repo_ids: number[] }) =>
     post<RequireCheckOut>("/governance/require-check", body),
+  notificationEvents: () => get<NotificationEvent[]>("/notifications/events"),
+  notificationChannels: () => get<NotificationChannel[]>("/notifications/channels"),
+  createChannel: (body: { kind: string; name: string; config: Record<string, string>; events: string[] }) =>
+    post<NotificationChannel>("/notifications/channels", body),
+  updateChannel: (
+    id: number,
+    body: { name?: string; config?: Record<string, string>; events?: string[]; enabled?: boolean },
+  ) => patch<NotificationChannel>(`/notifications/channels/${id}`, body),
+  deleteChannel: (id: number) => del<{ status: string; channel_id: number }>(`/notifications/channels/${id}`),
+  testChannel: (id: number) => post<NotificationTest>(`/notifications/channels/${id}/test`),
 };

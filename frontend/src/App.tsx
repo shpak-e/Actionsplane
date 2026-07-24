@@ -12,7 +12,7 @@ import { PipelinesTab } from "./components/PipelinesTab";
 import { PolicyTab } from "./components/PolicyTab";
 import { RadarTab } from "./components/RadarTab";
 import { CampaignsTab } from "./components/CampaignsTab";
-import { ReposTab } from "./components/ReposTab";
+import { SettingsTab } from "./components/SettingsTab";
 import { SyncButton } from "./components/SyncButton";
 import { SettingsMenu } from "./components/SettingsMenu";
 import {
@@ -22,9 +22,9 @@ import {
   BrandPipelines,
   BrandPolicy,
   BrandRadar,
-  BrandRepos,
   BrandRuns,
   BrandSecurity,
+  BrandSettings,
   IconKey,
   IconRepo,
   IconX,
@@ -45,7 +45,7 @@ type Tab =
   | "drift"
   | "pipelines"
   | "campaigns"
-  | "repos";
+  | "settings";
 
 export default function App() {
   const [repoId, setRepoId] = useState<number | null>(null);
@@ -131,11 +131,11 @@ export default function App() {
       hint: "Fleet-wide edit waves — dry-run diffs, then reviewed PRs",
     },
     {
-      id: "repos",
-      label: "Repos",
-      icon: <BrandRepos size={22} />,
-      group: "Fleet",
-      hint: "Add or remove the repositories ActionsPlane watches",
+      id: "settings",
+      label: "Settings",
+      icon: <BrandSettings size={22} />,
+      group: "Manage",
+      hint: "Notifications, repositories, and access control",
     },
   ];
 
@@ -256,7 +256,7 @@ export default function App() {
             {tab === "drift" && <DriftTab repoId={repoId} />}
             {tab === "pipelines" && <PipelinesTab />}
             {tab === "campaigns" && <CampaignsTab />}
-            {tab === "repos" && <ReposTab />}
+            {tab === "settings" && <SettingsTab />}
           </main>
         </div>
       </div>

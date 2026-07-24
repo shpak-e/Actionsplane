@@ -20,6 +20,7 @@ import httpx
 from arq import cron
 from arq.connections import RedisSettings
 
+from actionsplane.audit.deprecation_radar import scan_fleet
 from actionsplane.audit.sarif_service import upload_repo_sarif
 from actionsplane.audit.service import audit_repo
 from actionsplane.config import get_settings
@@ -47,6 +48,7 @@ from actionsplane.events import publish
 from actionsplane.github.client import GitHubClient
 from actionsplane.github.factory import TokenCache, app_jwt, client_for_installation
 from actionsplane.ingestor import events
+from actionsplane.notifications import dispatch_once
 from actionsplane.observability import continue_trace, setup_tracing
 from actionsplane.sync.concurrency import bounded_gather
 
@@ -187,6 +189,18 @@ async def _process_event(ctx: dict, event: str, payload: dict[str, Any]) -> str:
             run = events.normalize_workflow_run(payload)
             await upsert_run(session, run)
             await publish("run", run)
+            wr = payload["workflow_run"]
+            if wr.get("status") == "completed" and wr.get("conclusion") == "failure":
+                slug = (payload.get("repository") or {}).get("full_name", "?")
+                await dispatch_once(
+                    session,
+                    f"run:{wr['id']}",
+                    "run.failed",
+                    title=f"Workflow run failed — {slug}",
+                    body=f"“{wr.get('name', 'workflow')}” run #{wr.get('run_number')} on "
+                    f"{wr.get('head_branch')} concluded as failure.",
+                    link=wr.get("html_url"),
+                )
         elif event == "workflow_job":
             job = events.normalize_workflow_job(payload)
             await upsert_job(session, job)
@@ -407,6 +421,40 @@ async def prune_retention(ctx: dict) -> int:
     return pruned
 
 
+async def radar_alert_sweep(ctx: dict) -> int:
+    """Cron task: scan the deprecation radar and alert on entries that are overdue or urgent
+    (deadline within 90 days). De-duped via the notification ledger so each entry alerts once as it
+    crosses into urgency; a still-urgent entry on the next daily sweep is silent. Returns alerts.
+    """
+    if not get_settings().notifications_enabled:
+        return 0
+    if not await _claim_sweep_lease("radar_alert", ttl_seconds=3600):
+        return 0
+    sent = 0
+    async with get_sessionmaker()() as session:
+        report = await scan_fleet(session, as_of=datetime.now(UTC).date())
+        for entry in report.entries:
+            if entry.status not in ("overdue", "urgent"):
+                continue
+            when = (
+                f"{abs(entry.days_until)} days overdue"
+                if entry.days_until is not None and entry.days_until < 0
+                else f"due in {entry.days_until} days"
+            )
+            sent += await dispatch_once(
+                session,
+                f"radar:{entry.id}:{entry.status}",
+                "radar.deadline",
+                title=f"Deprecation {entry.status}: {entry.target}",
+                body=f"{entry.target} → {entry.replacement} ({when}), affecting "
+                f"{entry.workflows} workflow(s) in {entry.repos} repo(s).",
+                link=entry.reference,
+            )
+    if sent:
+        log.info("radar alert sweep sent %d deprecation alert(s)", sent)
+    return sent
+
+
 async def _on_startup(ctx: dict) -> None:
     """Configure tracing once when the arq worker boots (so worker spans export too)."""
     setup_tracing("actionsplane-worker")
@@ -422,6 +470,7 @@ class WorkerSettings:
         cron(audit_all, hour=set(range(0, 24, 6))),  # every 6 h: org-wide audit sweep
         cron(drift_sweep, hour=set(range(0, 24, 6)), minute={30}),  # every 6 h: drift sweep
         cron(prune_retention, hour={4}, minute={45}),  # daily: payload retention (Phase 5.6)
+        cron(radar_alert_sweep, hour={6}, minute={15}),  # daily: deprecation-deadline alerts
     ]
 
     # Explicit runtime bounds (review 3, 4d): sweeps over many repos can run minutes, so give jobs

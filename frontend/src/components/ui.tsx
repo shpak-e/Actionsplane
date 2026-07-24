@@ -211,6 +211,21 @@ export const BrandAlerts = ({ size = 20, className }: IconProps) =>
     </>,
   );
 
+// Settings — a gear with an ember hub (configuration: notifications, repos, access).
+export const BrandSettings = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <path
+        d="M12 4 L13.4 4 L14 6.2 L15.8 7 L17.8 5.9 L19.1 7.2 L18 9.2 L18.8 11 L21 11.6 L21 13.4 L18.8 14 L18 15.8 L19.1 17.8 L17.8 19.1 L15.8 18 L14 18.8 L13.4 21 L10.6 21 L10 18.8 L8.2 18 L6.2 19.1 L4.9 17.8 L6 15.8 L5.2 14 L3 13.4 L3 11.6 L5.2 11 L6 9.2 L4.9 7.2 L6.2 5.9 L8.2 7 L10 6.2 L10.6 4 Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+      />
+      <circle cx="12" cy="12.5" r="2.4" fill="var(--accent)" />
+    </>,
+  );
+
 // Campaigns — a fleet-wide edit fanning out from one source to many repos, lead target in ember.
 export const BrandCampaigns = ({ size = 20, className }: IconProps) =>
   brand(

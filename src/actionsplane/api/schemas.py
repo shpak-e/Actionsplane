@@ -302,6 +302,59 @@ class CampaignSummaryOut(BaseModel):
     errored: int  # targets that failed
 
 
+class NotificationChannelIn(BaseModel):
+    """Create an alert channel. ``config`` holds the destination: ``{"url": ...}`` for
+    slack/webhook, ``{"to": ...}`` for email. ``events`` are the event types it subscribes to."""
+
+    kind: str  # slack | webhook | email
+    name: str
+    config: dict
+    events: list[str] = []
+
+    @field_validator("kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in ("slack", "webhook", "email"):
+            raise ValueError("kind must be one of: slack, webhook, email")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name is required")
+        return v
+
+
+class NotificationChannelUpdate(BaseModel):
+    name: str | None = None
+    config: dict | None = None
+    events: list[str] | None = None
+    enabled: bool | None = None
+
+
+class NotificationChannelOut(BaseModel):
+    id: int
+    kind: str
+    name: str
+    events: list[str]
+    enabled: bool
+    created_at: datetime | None = None
+    target_hint: str | None = None  # masked destination (e.g. "hooks.slack.com/…/abc")
+
+
+class NotificationEventOut(BaseModel):
+    type: str
+    label: str
+    description: str
+
+
+class NotificationTestOut(BaseModel):
+    status: str  # "sent" | "error"
+    detail: str | None = None
+
+
 class AuditLogEntryOut(BaseModel):
     """One row of the append-only write-operation audit trail (plan §8, Phase 5.2)."""
 
