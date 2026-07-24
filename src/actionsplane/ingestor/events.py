@@ -65,6 +65,22 @@ def normalize_workflow_run(payload: dict[str, Any]) -> dict[str, Any]:
     return normalize_run_object(payload["workflow_run"], payload["repository"]["id"])
 
 
+def workflow_ref_from_run(run: dict[str, Any], repo_id: int) -> dict[str, Any] | None:
+    """Derive the ``workflows`` dimension row a run points at, or None if it names no workflow.
+
+    Every ingest path (webhook ``workflow_run``, the reconcile poller's REST run objects, offline
+    sync) has a run object carrying ``workflow_id`` + ``path`` + ``name``. ``workflow_runs`` and
+    ``audit_findings`` both FK-reference ``workflows.id`` (which is GitHub's workflow id), so the
+    parent row must exist before the run is inserted — nothing else populates it for live repos.
+    ``path`` is NOT NULL on the table; GitHub always sends it, but default to "" defensively so a
+    freak payload can't abort the whole run ingest.
+    """
+    wid = run.get("workflow_id")
+    if wid is None:
+        return None
+    return {"id": wid, "repo_id": repo_id, "path": run.get("path") or "", "name": run.get("name")}
+
+
 def normalize_workflow_job(payload: dict[str, Any]) -> dict[str, Any]:
     """Map a ``workflow_job`` event into workflow_jobs row kwargs."""
     job = payload["workflow_job"]

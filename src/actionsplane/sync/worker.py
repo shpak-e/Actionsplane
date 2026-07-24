@@ -40,6 +40,7 @@ from actionsplane.db.repository import (
     upsert_repo,
     upsert_run,
     upsert_runs,
+    upsert_workflow,
 )
 from actionsplane.drift import autobind_paths, compute_drift
 from actionsplane.events import publish
@@ -179,6 +180,10 @@ async def _process_event(ctx: dict, event: str, payload: dict[str, Any]) -> str:
             installation_id = (payload.get("installation") or {}).get("id")
             if installation_id is not None:
                 await upsert_repo(session, repo, installation_id=installation_id)
+            # Create the workflow dimension row the run FK-references before inserting the run.
+            wf = events.workflow_ref_from_run(payload["workflow_run"], payload["repository"]["id"])
+            if wf is not None:
+                await upsert_workflow(session, wf)
             run = events.normalize_workflow_run(payload)
             await upsert_run(session, run)
             await publish("run", run)
@@ -244,11 +249,17 @@ async def reconcile(ctx: dict) -> int:
             # dropped-webhook safety net, so it shouldn't store (or overwrite a webhook's) bulky
             # payload — the column is deferred and pruned anyway (review §5 H4).
             rows = []
+            workflows: dict[int, dict] = {}  # distinct workflow dimension rows the runs reference
             for run in runs:
                 row = events.normalize_run_object(run, repo.id)
                 row.pop("raw_payload", None)
                 rows.append(row)
+                wf = events.workflow_ref_from_run(run, repo.id)
+                if wf is not None:
+                    workflows[wf["id"]] = wf
             async with sessionmaker() as s:
+                for wf in workflows.values():  # parents first (FK), before the batch run upsert
+                    await upsert_workflow(s, wf)
                 await upsert_runs(s, rows)
                 await s.commit()
             return len(runs)

@@ -107,6 +107,18 @@ def _run_upsert_where(stmt):
     )
 
 
+async def upsert_workflow(session: AsyncSession, values: dict[str, Any]) -> None:
+    """Upsert the ``workflows`` dimension row a run/finding references (its GitHub workflow id).
+
+    Ingest must create this parent before inserting a run (FK ``workflow_runs.workflow_id`` →
+    ``workflows.id``); only the seed did so previously, so every live run violated the constraint.
+    Only the columns passed here are updated on conflict, so a later, sparser event never clobbers
+    a richer stored row — and ``parsed_ast``/``last_modified_sha`` (owned by the audit sweep, which
+    keys on ``workflow_relations`` not this table) are left untouched.
+    """
+    await _upsert(session, Workflow, values)
+
+
 async def upsert_run(session: AsyncSession, values: dict[str, Any]) -> int:
     """Upsert a run, never letting a stale event overwrite a fresher row. Returns rows written.
 
