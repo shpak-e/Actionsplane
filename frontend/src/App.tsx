@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import { NavRail, type RailTab } from "./components/NavRail";
 import { RepoTree, type WorkflowSel } from "./components/RepoTree";
+import { DashboardTab } from "./components/DashboardTab";
 import { RunGrid } from "./components/RunGrid";
 import { RunDetail } from "./components/RunDetail";
 import { SecurityTab } from "./components/SecurityTab";
@@ -17,6 +18,7 @@ import { SettingsMenu } from "./components/SettingsMenu";
 import {
   BrandCampaigns,
   BrandDrift,
+  BrandHome,
   BrandPipelines,
   BrandPolicy,
   BrandRadar,
@@ -34,12 +36,21 @@ import { useTheme } from "./hooks/useTheme";
 import { promptForToken, useHasOperateToken } from "./lib/auth";
 import type { Run } from "./types";
 
-type Tab = "runs" | "security" | "policy" | "radar" | "drift" | "pipelines" | "campaigns" | "repos";
+type Tab =
+  | "home"
+  | "runs"
+  | "security"
+  | "policy"
+  | "radar"
+  | "drift"
+  | "pipelines"
+  | "campaigns"
+  | "repos";
 
 export default function App() {
   const [repoId, setRepoId] = useState<number | null>(null);
   const [workflow, setWorkflow] = useState<WorkflowSel>(null);
-  const [tab, setTab] = useState<Tab>("runs");
+  const [tab, setTab] = useState<Tab>("home");
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
   const [firstRunDismissed, setFirstRunDismissed] = useState(false);
   const { connected } = useEventStream();
@@ -61,6 +72,12 @@ export default function App() {
   ).length;
 
   const tabs: RailTab<Tab>[] = [
+    {
+      id: "home",
+      label: "Home",
+      icon: <BrandHome size={22} />,
+      hint: "Your customizable fleet overview",
+    },
     {
       id: "runs",
       label: "Runs",
@@ -223,6 +240,7 @@ export default function App() {
             />
           )}
           <main className="content">
+            {tab === "home" && <DashboardTab onNavigate={(t) => setTab(t as Tab)} />}
             {tab === "runs" && (
               <RunGrid
                 repoId={repoId}

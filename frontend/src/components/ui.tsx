@@ -174,6 +174,43 @@ export const BrandPipelines = ({ size = 20, className }: IconProps) =>
     </>,
   );
 
+// Home — a dashboard of tiles, the lead tile lit in ember (your customizable overview).
+export const BrandHome = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.4" fill="var(--accent)" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.4" stroke="currentColor" strokeWidth="2" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.4" stroke="currentColor" strokeWidth="2" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.4" stroke="currentColor" strokeWidth="2" />
+    </>,
+  );
+
+// Docs — an open manual with an ember bookmark (usage + API reference).
+export const BrandDocs = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <path d="M4 5.5 A2 2 0 0 1 6 3.5 H11 V18 H6 A2 2 0 0 0 4 20 Z" stroke="currentColor" strokeWidth="2" />
+      <path d="M20 5.5 A2 2 0 0 0 18 3.5 H13 V18 H18 A2 2 0 0 1 20 20 Z" stroke="currentColor" strokeWidth="2" />
+      <path d="M15 3.5 V10 L16.5 8.6 L18 10 V3.5 Z" fill="var(--accent)" />
+    </>,
+  );
+
+// Alerts — a bell with an ember signal dot (notification routing).
+export const BrandAlerts = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <path d="M6.5 10 A5.5 5.5 0 0 1 17.5 10 C17.5 15 19 16.5 19 16.5 H5 S6.5 15 6.5 10 Z" stroke="currentColor" strokeWidth="2" />
+      <path d="M10 19.5 A2 2 0 0 0 14 19.5" stroke="currentColor" strokeWidth="2" />
+      <circle cx="17.5" cy="6.5" r="2.4" fill="var(--accent)" />
+    </>,
+  );
+
 // Campaigns — a fleet-wide edit fanning out from one source to many repos, lead target in ember.
 export const BrandCampaigns = ({ size = 20, className }: IconProps) =>
   brand(
