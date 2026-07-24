@@ -1,10 +1,31 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#faf9f5" />
+    <meta name="theme-color" content="#0B0C0E" />
     <title>ActionsPlane — GitHub Actions control plane</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="icon"
+      href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect x="0.75" y="0.75" width="30.5" height="30.5" rx="7.25" fill="%2315171B" stroke="%23272B31" stroke-width="1.5"/><path d="M8 9.5 L8 22.5 L14 16 Z" fill="%235B626D"/><path d="M13 9.5 L13 22.5 L19 16 Z" fill="%23B2B8C2"/><path d="M18 9.5 L18 22.5 L24 16 Z" fill="%23F6A623"/></svg>'
+    />
+    <script>
+      // Apply the saved theme before first paint to avoid a flash of the wrong theme.
+      (function () {
+        try {
+          var t = localStorage.getItem("ap-theme");
+          document.documentElement.setAttribute("data-theme", t === "light" ? "light" : "dark");
+        } catch (e) {
+          /* private mode / storage disabled — default dark from the html attribute stands */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

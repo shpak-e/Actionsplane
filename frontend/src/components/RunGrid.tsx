@@ -11,10 +11,12 @@ import {
   IconActivity,
   IconBranch,
   IconExternal,
+  IconX,
   StatusBadge,
   TableSkeleton,
 } from "./ui";
 import { RerunButton } from "./RerunButton";
+import type { WorkflowSel } from "./RepoTree";
 import type { Run } from "../types";
 
 const STATUS_OPTIONS: [string, string][] = [
@@ -26,18 +28,28 @@ const STATUS_OPTIONS: [string, string][] = [
 
 export function RunGrid({
   repoId,
+  workflow,
+  onClearWorkflow,
   onSelect,
   selectedRunId,
 }: {
   repoId: number | null;
+  workflow?: WorkflowSel;
+  onClearWorkflow?: () => void;
   onSelect: (run: Run) => void;
   selectedRunId: number | null;
 }) {
   const [status, setStatus] = useState("");
   const { byId } = useRepos();
+  const workflowId = workflow?.id ?? null;
   const { data: runs = [], isLoading, isError, error } = useQuery({
-    queryKey: ["runs", repoId, status],
-    queryFn: () => api.runs({ repo_id: repoId ?? undefined, status: status || undefined }),
+    queryKey: ["runs", repoId, workflowId, status],
+    queryFn: () =>
+      api.runs({
+        repo_id: repoId ?? undefined,
+        workflow_id: workflowId ?? undefined,
+        status: status || undefined,
+      }),
     // SSE (useEventStream) drives freshness; keep a 5-min staleTime as a fallback if the stream
     // drops, instead of a blanket 30s poll per grid.
     staleTime: 5 * 60_000,
@@ -51,6 +63,16 @@ export function RunGrid({
           <div className="sub">
             Live history across {repoId ? "this repository" : "all watched repositories"}
           </div>
+          {workflow && (
+            <span className="filter-chip">
+              {workflow.name}
+              {onClearWorkflow && (
+                <button onClick={onClearWorkflow} aria-label="Clear workflow filter" title="Clear filter">
+                  <IconX size={12} />
+                </button>
+              )}
+            </span>
+          )}
         </div>
         <label className="field">
           Status

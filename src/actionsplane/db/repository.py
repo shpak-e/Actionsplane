@@ -324,6 +324,20 @@ async def list_repos(session: AsyncSession, *, watched_only: bool = True) -> lis
     return list((await session.scalars(stmt)).all())
 
 
+async def get_repo_by_owner_name(session: AsyncSession, owner: str, name: str) -> Repo | None:
+    """Case-insensitive lookup — the add-repo flow keys on owner/name, not the GitHub numeric id."""
+    stmt = select(Repo).where(
+        func.lower(Repo.owner) == owner.lower(), func.lower(Repo.name) == name.lower()
+    )
+    return (await session.scalars(stmt)).first()
+
+
+async def set_repo_watched(session: AsyncSession, repo_id: int, watched: bool) -> None:
+    """Toggle a repo's watched flag — the soft add/remove for the fleet (no row deletion, so a
+    webhook or reconcile sweep can't resurrect a removed repo: neither path writes ``watched``)."""
+    await session.execute(update(Repo).where(Repo.id == repo_id).values(watched=watched))
+
+
 async def list_workflows(session: AsyncSession, *, repo_id: int) -> list[Workflow]:
     stmt = select(Workflow).where(Workflow.repo_id == repo_id)
     return list((await session.scalars(stmt)).all())

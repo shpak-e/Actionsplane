@@ -12,7 +12,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import date
+from datetime import UTC, date, datetime
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
@@ -30,6 +30,7 @@ from actionsplane.api.schemas import (
     CampaignCreate,
     CampaignOut,
     CampaignTargetOut,
+    DriftDetailOut,
     FindingOut,
     FindingsPage,
     JobOut,
@@ -38,6 +39,7 @@ from actionsplane.api.schemas import (
     PipelineGraphOut,
     PolicySimulateIn,
     RadarReportOut,
+    RepoAddIn,
     RepoOut,
     RunOut,
     SarifIngestIn,
@@ -60,6 +62,8 @@ from actionsplane.db.repository import (
     create_binding,
     create_campaign,
     get_campaign,
+    get_repo,
+    get_repo_by_owner_name,
     latest_runs_for,
     list_all_workflows,
     list_bindings,
@@ -75,16 +79,21 @@ from actionsplane.db.repository import (
     metrics_records,
     open_findings,
     record_write_audit,
+    set_repo_watched,
+    upsert_installation,
     upsert_template,
 )
+from actionsplane.drift.binding_service import drift_detail
 from actionsplane.events import subscribe
 from actionsplane.events.bus import SubscriberLimit
 from actionsplane.executor.actions import rerun_run
 from actionsplane.executor.campaigns import apply_campaign, run_dry_run
 from actionsplane.executor.operations import OPERATIONS
+from actionsplane.github.client import GitHubClient
 from actionsplane.metrics import summarize_runs
 from actionsplane.observability import instrument_fastapi, setup_tracing
 from actionsplane.offline import last_sync, sync_offline
+from actionsplane.offline.sync import OFFLINE_INSTALLATION_ID, sync_repo
 from actionsplane.policy import Policy
 from actionsplane.policy.service import simulate_policy
 from actionsplane.relations import build_pipeline_graph
@@ -151,6 +160,79 @@ async def get_repos(
 ) -> list[RepoOut]:
     repos = await list_repos(session, watched_only=watched_only)
     return [RepoOut.model_validate(r, from_attributes=True) for r in repos]
+
+
+@router.post("/repos", response_model=RepoOut, status_code=201)
+async def add_repo_endpoint(
+    body: RepoAddIn,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> RepoOut:
+    """Add a repository to the watched fleet. A previously-removed (unwatched) repo is simply
+    re-watched; a brand-new one is fetched from GitHub (public read / PAT) and its runs + audit
+    populated, mirroring the offline sync path."""
+    existing = await get_repo_by_owner_name(session, body.owner, body.name)
+    if existing is not None:
+        await set_repo_watched(session, existing.id, True)
+        await record_write_audit(
+            session, actor=actor, action="repo.add", target=f"repo:{body.owner}/{body.name}"
+        )
+        await session.commit()
+        repo = await get_repo(session, existing.id)
+        return RepoOut.model_validate(repo, from_attributes=True)
+
+    # New repo — fetch it (offline installation FK target must exist first).
+    settings = get_settings()
+    await upsert_installation(
+        session,
+        {
+            "id": OFFLINE_INSTALLATION_ID,
+            "account_login": "offline",
+            "account_type": "Organization",
+            "installed_at": datetime.now(UTC),
+        },
+    )
+    await session.commit()
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            gh = GitHubClient(settings.github_token, client=http)
+            await sync_repo(session, gh, body.owner, body.name)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            502, f"GitHub couldn't add {body.owner}/{body.name} ({exc.response.status_code})"
+        ) from exc
+    except Exception as exc:  # bad name, private without a token, etc.
+        raise HTTPException(422, f"could not add {body.owner}/{body.name}: {exc}") from exc
+
+    repo = await get_repo_by_owner_name(session, body.owner, body.name)
+    if repo is None:
+        raise HTTPException(404, "repository not found after fetch")
+    await set_repo_watched(session, repo.id, True)
+    await record_write_audit(
+        session, actor=actor, action="repo.add", target=f"repo:{body.owner}/{body.name}"
+    )
+    await session.commit()
+    repo = await get_repo(session, repo.id)
+    return RepoOut.model_validate(repo, from_attributes=True)
+
+
+@router.delete("/repos/{repo_id}")
+async def remove_repo_endpoint(
+    repo_id: int,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> dict[str, object]:
+    """Remove a repository from the watched fleet (soft — unwatch, so history is retained and a
+    webhook/reconcile sweep can't resurrect it)."""
+    repo = await get_repo(session, repo_id)
+    if repo is None:
+        raise HTTPException(404, "repository not found")
+    await set_repo_watched(session, repo_id, False)
+    await record_write_audit(
+        session, actor=actor, action="repo.remove", target=f"repo:{repo.owner}/{repo.name}"
+    )
+    await session.commit()
+    return {"status": "removed", "repo_id": repo_id}
 
 
 @router.get("/repos/{repo_id}/workflows", response_model=list[WorkflowOut])
@@ -509,6 +591,25 @@ async def get_drift(
 ) -> list[BindingOut]:
     bindings = await list_bindings(session, repo_id=repo_id)
     return [BindingOut.model_validate(b, from_attributes=True) for b in bindings]
+
+
+@router.get("/drift/{binding_id}/detail", response_model=DriftDetailOut)
+async def get_drift_detail(
+    binding_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> DriftDetailOut:
+    """Recompute and return what drifted for one binding (change list + both YAMLs)."""
+    try:
+        detail = await drift_detail(session, binding_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RuntimeError as exc:  # GitHub App not configured
+        raise HTTPException(503, str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            502, f"GitHub error fetching the workflow ({exc.response.status_code})"
+        ) from exc
+    return DriftDetailOut(**detail)
 
 
 @router.post("/templates", response_model=TemplateOut, status_code=201)
