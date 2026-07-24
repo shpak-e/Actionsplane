@@ -35,9 +35,11 @@ from actionsplane.api.schemas import (
     MetricsOut,
     ModeOut,
     PipelineGraphOut,
+    PolicySimulateIn,
     RepoOut,
     RunOut,
     ScorecardOut,
+    SimulationReportOut,
     TemplateCreate,
     TemplateOut,
     WorkflowOut,
@@ -77,6 +79,8 @@ from actionsplane.executor.operations import OPERATIONS
 from actionsplane.metrics import summarize_runs
 from actionsplane.observability import instrument_fastapi, setup_tracing
 from actionsplane.offline import last_sync, sync_offline
+from actionsplane.policy import Policy
+from actionsplane.policy.service import simulate_policy
 from actionsplane.relations import build_pipeline_graph
 
 log = logging.getLogger(__name__)
@@ -431,6 +435,25 @@ async def get_scorecard(session: AsyncSession = Depends(get_session)) -> Scoreca
     repos = await list_repos(session, watched_only=True)
     sc = build_scorecard(counts, repos=len(repos))
     return ScorecardOut(**asdict(sc))
+
+
+@router.post("/policy/simulate", response_model=SimulationReportOut)
+async def simulate_policy_endpoint(
+    body: PolicySimulateIn,
+    session: AsyncSession = Depends(get_session),
+) -> SimulationReportOut:
+    """Simulate a proposed policy against the fleet (W2). Read-only — no writes, no GitHub I/O.
+
+    Returns how many workflows/repos would break, a per-rule rollup with the fix operation, and
+    the repo ids a fix campaign would target.
+    """
+    policy = Policy(
+        require_sha_pinned=body.require_sha_pinned,
+        disallowed_triggers=tuple(body.disallowed_triggers),
+        require_permissions=body.require_permissions,
+    )
+    report = await simulate_policy(session, policy)
+    return SimulationReportOut(**asdict(report))
 
 
 @router.get("/templates", response_model=list[TemplateOut])
