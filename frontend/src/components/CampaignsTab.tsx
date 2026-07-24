@@ -25,6 +25,20 @@ function statusClass(status: string): string {
   return "running";
 }
 
+/** Human-readable label for a raw campaign/target status string (no more "dry-run-ok"). */
+const STATUS_LABEL: Record<string, string> = {
+  "dry-run-ok": "Ready",
+  "dry-run": "Previewing",
+  "pr-opened": "PR opened",
+  applied: "Applied",
+  pending: "Pending",
+  error: "Error",
+  failed: "Failed",
+};
+function statusLabel(status: string): string {
+  return STATUS_LABEL[status] ?? status.replace(/-/g, " ");
+}
+
 /** Render a unified diff string with per-line +/-/@ coloring (reuses the drift diff styles). */
 function DiffBlock({ text }: { text: string }) {
   const lines = text.replace(/\n$/, "").split("\n");
@@ -70,7 +84,7 @@ function TargetRow({ target, repoName }: { target: CampaignTarget; repoName: str
           ) : (
             <span className="subtle mono">no change</span>
           )}
-          <span className={`badge ${statusClass(target.status)}`}>{target.status}</span>
+          <span className={`badge ${statusClass(target.status)}`}>{statusLabel(target.status)}</span>
         </span>
       </button>
       {open && hasDiff && <DiffBlock text={target.diff_preview!} />}
@@ -119,7 +133,7 @@ function CampaignDetail({ id, onClose }: { id: number; onClose: () => void }) {
             <span className="subtle mono" style={{ fontSize: 11 }}>
               {relativeTime(data.created_at)}
             </span>
-            <span className={`badge ${statusClass(data.status)}`}>{data.status}</span>
+            <span className={`badge ${statusClass(data.status)}`}>{statusLabel(data.status)}</span>
           </div>
         )}
       </div>
@@ -233,7 +247,7 @@ export function CampaignsTab() {
                     {c.errored > 0 && <span className="ct-err mono"> · {c.errored} err</span>}
                   </td>
                   <td>
-                    <span className={`badge ${statusClass(c.status)}`}>{c.status}</span>
+                    <span className={`badge ${statusClass(c.status)}`}>{statusLabel(c.status)}</span>
                   </td>
                   <td className="muted">{relativeTime(c.created_at)}</td>
                 </tr>
