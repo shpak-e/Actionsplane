@@ -156,6 +156,18 @@ class RadarReportOut(BaseModel):
     entries: list[RadarEntryOut]
 
 
+class SarifIngestIn(BaseModel):
+    """A SARIF 2.1.0 document from an external scanner (zizmor/poutine/Scorecard) to ingest (D1)."""
+
+    sarif: dict
+
+
+class SarifIngestOut(BaseModel):
+    ingested: int
+    resolved: int
+    tools: list[str]
+
+
 class TemplateOut(BaseModel):
     id: int
     name: str

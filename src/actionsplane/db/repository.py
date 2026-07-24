@@ -484,6 +484,25 @@ async def resolve_stale_findings(
     await session.execute(stmt)
 
 
+async def resolve_stale_findings_for_source(
+    session: AsyncSession, *, repo_id: int, type_prefix: str, seen_fingerprints: set[str]
+) -> int:
+    """Resolve a repo's open findings whose ``finding_type`` starts with ``type_prefix`` and that
+    weren't seen this run — so re-ingesting one scanner's SARIF (D1) lifecycles only that scanner's
+    findings (``zizmor:%``), never the native ones or another tool's. Returns rows resolved."""
+    stmt = (
+        update(AuditFinding)
+        .where(
+            AuditFinding.repo_id == repo_id,
+            AuditFinding.resolved_at.is_(None),
+            AuditFinding.finding_type.like(f"{type_prefix}%"),
+            AuditFinding.fingerprint.notin_(seen_fingerprints or [""]),
+        )
+        .values(resolved_at=datetime.now(UTC))
+    )
+    return (await session.execute(stmt)).rowcount
+
+
 async def upsert_workflow_relation(
     session: AsyncSession, *, repo_id: int, path: str, name: str | None, descriptor: dict[str, Any]
 ) -> None:
