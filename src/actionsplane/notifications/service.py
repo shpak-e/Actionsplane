@@ -11,9 +11,14 @@ is the one path that surfaces errors (so the UI can show a failed test).
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import re
 import smtplib
+import socket
 from email.message import EmailMessage
+from email.policy import default as default_email_policy
+from urllib.parse import urlsplit
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +28,83 @@ from actionsplane.db.models import NotificationChannel
 from actionsplane.db.repository import list_notification_channels, mark_notified
 
 log = logging.getLogger(__name__)
+
+# Channel-destination validation (SSRF guard). Operator-supplied URLs are POSTed by the server, so a
+# URL must be http(s) (slack: https only) and must NOT resolve to a private / loopback / linklocal /
+# reserved address — otherwise an operator could pivot the server into the internal network or the
+# cloud metadata endpoint (169.254.169.254). Redirects are disabled at the client so a 30x can't
+# bypass this. Recipients are validated to a single address with no CR/LF (SMTP header injection).
+_ALLOWED_SCHEMES: dict[str, set[str]] = {"slack": {"https"}, "webhook": {"http", "https"}}
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def validate_destination(kind: str, config: dict) -> None:
+    """Sync format check for a channel destination. Raises ``ValueError`` on anything malformed.
+    (The IP-range SSRF check is done at send time — see ``_assert_public_url`` — to also cover the
+    resolve-just-before-connect window.)"""
+    cfg = config or {}
+    if kind == "email":
+        to = str(cfg.get("to", "")).strip()
+        if not to or "\r" in to or "\n" in to or not _EMAIL_RE.match(to):
+            raise ValueError("invalid email recipient")
+        return
+    url = str(cfg.get("url", "")).strip()
+    parts = urlsplit(url)
+    allowed = _ALLOWED_SCHEMES.get(kind, {"https"})
+    if parts.scheme not in allowed:
+        raise ValueError(f"{kind} URL must use {' or '.join(sorted(allowed))}")
+    host = parts.hostname
+    if not host:
+        raise ValueError("URL has no host")
+    # If the host is a literal IP, reject non-public ones now (no DNS needed — works even where the
+    # API can't resolve arbitrary hosts). Hostnames are DNS-checked at send time (see _deliver).
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None and not _is_public(str(ip)):
+        raise ValueError("destination address is non-public (blocked)")
+
+
+def _is_public(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+async def _assert_public_url(url: str) -> None:
+    """Resolve the host; reject if any address is non-public (SSRF). Raises ``ValueError``."""
+    host = urlsplit(url).hostname
+    if not host:
+        raise ValueError("URL has no host")
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise ValueError(f"cannot resolve destination host {host!r}") from exc
+    if not all(_is_public(info[4][0]) for info in infos):
+        raise ValueError("destination resolves to a non-public address (blocked)")
+
+
+def safe_error(exc: Exception) -> str:
+    """A delivery-failure message safe to log / return — never echoes the channel's secret URL.
+    Our own validation/config errors are kept (they carry no secret); network errors are reduced to
+    their type + any HTTP status, since httpx error strings embed the full URL."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"destination returned HTTP {exc.response.status_code}"
+    if isinstance(exc, ValueError | RuntimeError):
+        return str(exc)[:200]
+    return f"delivery failed ({type(exc).__name__})"
+
 
 # The event types a channel may subscribe to, with UI-facing labels/descriptions.
 EVENT_TYPES: dict[str, dict[str, str]] = {
@@ -66,7 +148,9 @@ def _smtp_send(to: str, subject: str, body: str) -> None:
     s = get_settings()
     if not s.smtp_host:
         raise RuntimeError("email channel requires ACTIONSPLANE_SMTP_HOST to be configured")
-    msg = EmailMessage()
+    if "\r" in to or "\n" in to:  # defense-in-depth vs SMTP header injection
+        raise ValueError("invalid email recipient")
+    msg = EmailMessage(policy=default_email_policy)
     msg["Subject"] = subject
     msg["From"] = s.smtp_from or s.smtp_username or "actionsplane@localhost"
     msg["To"] = to
@@ -90,9 +174,13 @@ async def _deliver(
     """Send one message to one channel. Raises on failure (caller decides whether to swallow)."""
     cfg = channel.config or {}
     if channel.kind == "slack":
-        await _send_slack(str(cfg.get("url", "")), title, body, http)
+        url = str(cfg.get("url", ""))
+        await _assert_public_url(url)
+        await _send_slack(url, title, body, http)
     elif channel.kind == "webhook":
-        await _send_webhook(str(cfg.get("url", "")), event_type, title, body, link, http)
+        url = str(cfg.get("url", ""))
+        await _assert_public_url(url)
+        await _send_webhook(url, event_type, title, body, link, http)
     elif channel.kind == "email":
         subject = f"[ActionsPlane] {title}"
         text = f"{body}\n\n{link}" if link else body
@@ -117,14 +205,17 @@ async def dispatch(
     if not channels:
         return 0
     delivered = 0
-    async with httpx.AsyncClient(timeout=15) as http:
+    async with httpx.AsyncClient(timeout=15, follow_redirects=False) as http:
         for channel in channels:
             try:
                 await _deliver(channel, event_type, title, body, link, http)
                 delivered += 1
             except Exception as exc:  # one bad channel must never break the caller
                 log.warning(
-                    "notification to channel %s (%s) failed: %s", channel.id, channel.kind, exc
+                    "notification to channel %s (%s) failed: %s",
+                    channel.id,
+                    channel.kind,
+                    safe_error(exc),
                 )
     return delivered
 
@@ -148,7 +239,7 @@ async def dispatch_once(
 
 async def send_test(channel: NotificationChannel) -> None:
     """Deliver a test message to one channel. Raises on failure so the UI can report it."""
-    async with httpx.AsyncClient(timeout=15) as http:
+    async with httpx.AsyncClient(timeout=15, follow_redirects=False) as http:
         await _deliver(
             channel,
             "test",

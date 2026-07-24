@@ -107,6 +107,7 @@ from actionsplane.governance.service import require_check_fleet
 from actionsplane.metrics import summarize_runs
 from actionsplane.notifications import EVENT_TYPES
 from actionsplane.notifications import send_test as send_test_notification
+from actionsplane.notifications.service import safe_error, validate_destination
 from actionsplane.observability import instrument_fastapi, setup_tracing
 from actionsplane.offline import last_sync, sync_offline
 from actionsplane.offline.sync import OFFLINE_INSTALLATION_ID, sync_repo
@@ -869,9 +870,10 @@ async def create_channel_endpoint(
     unknown = [e for e in body.events if e not in EVENT_TYPES]
     if unknown:
         raise HTTPException(422, f"unknown event type(s): {', '.join(unknown)}")
-    need = "to" if body.kind == "email" else "url"
-    if not str((body.config or {}).get(need, "")).strip():
-        raise HTTPException(422, f"{body.kind} channel requires config.{need}")
+    try:
+        validate_destination(body.kind, body.config)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     channel = await create_notification_channel(
         session, kind=body.kind, name=body.name, config=body.config, events=body.events
     )
@@ -900,6 +902,10 @@ async def update_channel_endpoint(
     if body.name is not None:
         channel.name = body.name.strip() or channel.name
     if body.config is not None:
+        try:
+            validate_destination(channel.kind, body.config)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         channel.config = body.config
     if body.enabled is not None:
         channel.enabled = body.enabled
@@ -940,8 +946,8 @@ async def test_channel_endpoint(
     try:
         await send_test_notification(channel)
         return NotificationTestOut(status="sent")
-    except Exception as exc:  # surface the delivery failure to the operator
-        return NotificationTestOut(status="error", detail=str(exc)[:300])
+    except Exception as exc:  # surface the failure — scrubbed so a secret URL can't leak
+        return NotificationTestOut(status="error", detail=safe_error(exc))
 
 
 @router.get("/audit-log", response_model=list[AuditLogEntryOut])

@@ -5,7 +5,17 @@ from actionsplane.notifications.service import (
     KINDS,
     dispatch,
     dispatch_once,
+    safe_error,
     send_test,
+    validate_destination,
 )
 
-__all__ = ["EVENT_TYPES", "KINDS", "dispatch", "dispatch_once", "send_test"]
+__all__ = [
+    "EVENT_TYPES",
+    "KINDS",
+    "dispatch",
+    "dispatch_once",
+    "safe_error",
+    "send_test",
+    "validate_destination",
+]

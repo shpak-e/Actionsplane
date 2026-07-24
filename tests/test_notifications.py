@@ -174,3 +174,71 @@ async def test_deliver_email_without_smtp_raises(monkeypatch):
     async with httpx.AsyncClient() as http:
         with pytest.raises(Exception, match="SMTP"):
             await service._deliver(ch, "test", "t", "b", None, http)
+
+
+# --- SSRF / destination validation ---------------------------------------------------------------
+
+
+def test_validate_destination_format():
+    service.validate_destination("slack", {"url": "https://hooks.slack.com/x"})  # ok
+    service.validate_destination("webhook", {"url": "http://example.com/h"})  # http allowed
+    service.validate_destination("email", {"to": "a@b.com"})  # ok
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="https"):
+        service.validate_destination("slack", {"url": "http://hooks.slack.com/x"})  # needs TLS
+    with _pytest.raises(ValueError):
+        service.validate_destination("webhook", {"url": "ftp://example.com"})  # bad scheme
+    with _pytest.raises(ValueError):
+        service.validate_destination("webhook", {"url": "https://"})  # no host
+    with _pytest.raises(ValueError, match="recipient"):
+        service.validate_destination("email", {"to": "a@b.com\r\nBcc: x@y.com"})  # CRLF injection
+    with _pytest.raises(ValueError, match="recipient"):
+        service.validate_destination("email", {"to": "not-an-email"})
+
+
+@pytest.mark.asyncio
+async def test_assert_public_url_blocks_internal_targets():
+    # literal IPs → no real DNS lookup
+    for bad in (
+        "http://127.0.0.1:8080/x",  # loopback
+        "http://169.254.169.254/latest/meta-data/",  # cloud metadata / link-local
+        "http://10.0.0.5/hook",  # private
+        "http://192.168.1.1/",  # private
+    ):
+        with pytest.raises(ValueError, match=r"non-public|resolve"):
+            await service._assert_public_url(bad)
+    # a public literal IP passes
+    await service._assert_public_url("https://8.8.8.8/hook")
+
+
+@pytest.mark.asyncio
+async def test_create_channel_endpoint_blocks_ssrf(session):
+    from fastapi import HTTPException
+
+    from actionsplane.api.app import create_channel_endpoint
+    from actionsplane.api.schemas import NotificationChannelIn
+
+    with pytest.raises(HTTPException) as exc:
+        await create_channel_endpoint(
+            NotificationChannelIn(
+                kind="webhook",
+                name="evil",
+                config={"url": "http://169.254.169.254/latest/meta-data/"},
+                events=[],
+            ),
+            session=session,
+            actor="tester",
+        )
+    assert exc.value.status_code == 422
+
+
+def test_safe_error_never_leaks_url():
+    req = httpx.Request("POST", "https://hooks.slack.com/services/T0/B0/SECRETtoken")
+    resp = httpx.Response(500, request=req)
+    http_err = httpx.HTTPStatusError("boom", request=req, response=resp)
+    assert service.safe_error(http_err) == "destination returned HTTP 500"
+    # a connect error's str embeds the URL/host — safe_error must reduce it to the type
+    conn_err = httpx.ConnectError("failed to connect to https://hooks.slack.com/SECRET")
+    out = service.safe_error(conn_err)
+    assert "SECRET" not in out and "ConnectError" in out
