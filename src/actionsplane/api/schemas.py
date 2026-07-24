@@ -23,6 +23,26 @@ class RepoOut(BaseModel):
     archived: bool
 
 
+# owner/name land in GitHub API paths and git refs, so constrain to the charset GitHub actually
+# permits for owners and repo names before they reach any of those.
+_REPO_PART_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+class RepoAddIn(BaseModel):
+    """Add (or re-watch) a repository by owner/name."""
+
+    owner: str
+    name: str
+
+    @field_validator("owner", "name")
+    @classmethod
+    def _charset(cls, v: str) -> str:
+        v = v.strip()
+        if not v or not _REPO_PART_RE.match(v):
+            raise ValueError("owner/name must match ^[A-Za-z0-9._-]+$")
+        return v
+
+
 class WorkflowOut(BaseModel):
     id: int
     repo_id: int
@@ -181,6 +201,19 @@ class BindingOut(BaseModel):
     path: str
     last_drift_check_at: datetime | None
     drift_severity: str | None
+
+
+class DriftDetailOut(BaseModel):
+    """Recomputed drift diff for one binding — change list plus both YAMLs for a side-by-side."""
+
+    binding_id: int
+    repo: str
+    path: str
+    template: str
+    severity: str
+    changes: list[str]
+    canonical_yaml: str
+    candidate_yaml: str
 
 
 class TemplateCreate(BaseModel):

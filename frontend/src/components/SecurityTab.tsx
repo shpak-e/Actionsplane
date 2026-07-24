@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { EmptyState, ErrorBanner, IconShield, ScoreRing, SeverityPill, TableSkeleton } from "./ui";
+import { FindingFix } from "./FindingFix";
 import type { Finding } from "../types";
 
 const SEVERITIES: [string, string][] = [
@@ -127,6 +128,7 @@ export function SecurityTab({ repoId }: { repoId: number | null }) {
                 <th>Path</th>
                 <th>Reference</th>
                 <th>Finding</th>
+                <th aria-label="fix" />
               </tr>
             </thead>
             <tbody>
@@ -139,6 +141,9 @@ export function SecurityTab({ repoId }: { repoId: number | null }) {
                   <td className="mono">{f.path ?? "—"}</td>
                   <td className="mono">{f.ref ?? "—"}</td>
                   <td>{f.message}</td>
+                  <td className="actions">
+                    <FindingFix finding={f} />
+                  </td>
                 </tr>
               ))}
             </tbody>

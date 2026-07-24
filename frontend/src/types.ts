@@ -7,6 +7,14 @@ export interface Repo {
   archived: boolean;
 }
 
+export interface Workflow {
+  id: number;
+  repo_id: number;
+  path: string;
+  name: string | null;
+  state: string;
+}
+
 export interface Run {
   id: number;
   repo_id: number;
@@ -99,11 +107,40 @@ export interface Binding {
   drift_severity: string | null;
 }
 
+export interface DriftDetail {
+  binding_id: number;
+  repo: string;
+  path: string;
+  template: string;
+  severity: string;
+  changes: string[];
+  canonical_yaml: string;
+  candidate_yaml: string;
+}
+
 export interface Mode {
   offline: boolean;
   live: boolean;
   repos: string[];
   synced_at: string | null;
+}
+
+export interface CampaignTarget {
+  id: number;
+  repo_id: number;
+  status: string;
+  pr_number: number | null;
+  pr_url: string | null;
+  diff_preview: string | null;
+  error: string | null;
+}
+
+export interface Campaign {
+  id: number;
+  name: string;
+  operation: string;
+  status: string;
+  targets: CampaignTarget[];
 }
 
 export interface PipelineNode {

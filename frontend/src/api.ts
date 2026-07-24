@@ -1,6 +1,8 @@
 import { getOperateToken } from "./lib/auth";
 import type {
   Binding,
+  Campaign,
+  DriftDetail,
   Finding,
   Job,
   Metrics,
@@ -9,6 +11,7 @@ import type {
   Repo,
   Run,
   Scorecard,
+  Workflow,
 } from "./types";
 
 const BASE = "/api/v1";
@@ -29,8 +32,23 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function post<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: "POST", headers: authHeaders() });
+async function post<T>(path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { ...(authHeaders() as Record<string, string>) };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail || `${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: authHeaders() });
   if (!res.ok) {
     const detail = await res.json().catch(() => null);
     throw new Error(detail?.detail || `${res.status} ${res.statusText}`);
@@ -40,6 +58,10 @@ async function post<T>(path: string): Promise<T> {
 
 export const api = {
   repos: () => get<Repo[]>("/repos"),
+  allRepos: () => get<Repo[]>("/repos?watched_only=false"),
+  addRepo: (body: { owner: string; name: string }) => post<Repo>("/repos", body),
+  removeRepo: (id: number) => del<{ status: string; repo_id: number }>(`/repos/${id}`),
+  workflows: (repoId: number) => get<Workflow[]>(`/repos/${repoId}/workflows`),
   runs: (params: { repo_id?: number; workflow_id?: number; branch?: string; status?: string }) => {
     const q = new URLSearchParams();
     Object.entries(params).forEach(([k, v]) => v != null && q.set(k, String(v)));
@@ -64,8 +86,12 @@ export const api = {
   scorecard: () => get<Scorecard>("/audit/scorecard"),
   drift: (repoId?: number) =>
     get<Binding[]>(`/drift${repoId != null ? `?repo_id=${repoId}` : ""}`),
+  driftDetail: (bindingId: number) => get<DriftDetail>(`/drift/${bindingId}/detail`),
   rerun: (runId: number) => post<{ status: string }>(`/runs/${runId}/rerun`),
   mode: () => get<Mode>("/mode"),
   offlineSync: () => post<Mode>("/offline/sync"),
   pipelines: () => get<PipelineGraph>("/pipelines"),
+  createCampaign: (body: { name: string; operation: string; repo_ids: number[] }) =>
+    post<Campaign>("/campaigns", body),
+  applyCampaign: (id: number) => post<Campaign>(`/campaigns/${id}/apply`),
 };
