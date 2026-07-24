@@ -78,6 +78,27 @@ class MetricsOut(BaseModel):
     flake_rate: float | None
 
 
+class FleetCostRow(BaseModel):
+    """Per-workflow cost/time rollup across the fleet (for the Cost view)."""
+
+    workflow_id: int
+    repo: str | None
+    name: str
+    runs: int
+    failures: int
+    total_minutes: float  # sum of run durations — the compute-cost proxy
+    avg_duration_s: float | None
+    p95_duration_s: float | None
+    p95_queue_s: float | None
+    last_run_at: datetime | None
+
+
+class FleetCostOut(BaseModel):
+    window_days: int
+    total_minutes: float  # fleet total over the window
+    rows: list[FleetCostRow]
+
+
 class StepOut(BaseModel):
     """One step within a job (from GitHub's job ``steps`` array — the failed-step locus)."""
 

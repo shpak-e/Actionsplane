@@ -9,6 +9,7 @@ import { RunDetail } from "./components/RunDetail";
 import { SecurityTab } from "./components/SecurityTab";
 import { DriftTab } from "./components/DriftTab";
 import { PipelinesTab } from "./components/PipelinesTab";
+import { CostTab } from "./components/CostTab";
 import { PolicyTab } from "./components/PolicyTab";
 import { RadarTab } from "./components/RadarTab";
 import { CampaignsTab } from "./components/CampaignsTab";
@@ -18,6 +19,7 @@ import { SyncButton } from "./components/SyncButton";
 import { SettingsMenu } from "./components/SettingsMenu";
 import {
   BrandCampaigns,
+  BrandCost,
   BrandDrift,
   BrandHome,
   BrandPipelines,
@@ -46,6 +48,7 @@ type Tab =
   | "radar"
   | "drift"
   | "pipelines"
+  | "cost"
   | "campaigns"
   | "settings"
   | "docs";
@@ -94,6 +97,13 @@ export default function App() {
       icon: <BrandPipelines size={22} />,
       group: "Observe",
       hint: "How workflows trigger and call each other across repos",
+    },
+    {
+      id: "cost",
+      label: "Cost",
+      icon: <BrandCost size={22} />,
+      group: "Observe",
+      hint: "Longest-running & most-expensive workflows (Actions minutes)",
     },
     {
       id: "security",
@@ -265,6 +275,7 @@ export default function App() {
             {tab === "radar" && <RadarTab />}
             {tab === "drift" && <DriftTab repoId={repoId} />}
             {tab === "pipelines" && <PipelinesTab />}
+            {tab === "cost" && <CostTab />}
             {tab === "campaigns" && <CampaignsTab />}
             {tab === "settings" && <SettingsTab />}
             {tab === "docs" && <DocsTab />}

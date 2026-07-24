@@ -104,6 +104,25 @@ export interface NotificationEvent {
   description: string;
 }
 
+export interface FleetCostRow {
+  workflow_id: number;
+  repo: string | null;
+  name: string;
+  runs: number;
+  failures: number;
+  total_minutes: number;
+  avg_duration_s: number | null;
+  p95_duration_s: number | null;
+  p95_queue_s: number | null;
+  last_run_at: string | null;
+}
+
+export interface FleetCost {
+  window_days: number;
+  total_minutes: number;
+  rows: FleetCostRow[];
+}
+
 export interface OpenApiParameter {
   name: string;
   in: string;

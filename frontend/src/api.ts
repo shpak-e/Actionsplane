@@ -5,6 +5,7 @@ import type {
   CampaignSummary,
   DriftDetail,
   Finding,
+  FleetCost,
   Job,
   Metrics,
   Mode,
@@ -94,6 +95,7 @@ export const api = {
   },
   jobs: (runId: number) => get<Job[]>(`/runs/${runId}/jobs`),
   metrics: (workflowId: number) => get<Metrics>(`/workflows/${workflowId}/metrics`),
+  fleetCost: (days = 30) => get<FleetCost>(`/metrics/fleet?days=${days}`),
   findings: (params: {
     repo_id?: number;
     severity?: string;
