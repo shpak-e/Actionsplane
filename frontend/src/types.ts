@@ -98,6 +98,12 @@ export interface Scorecard {
   score: number;
 }
 
+export interface Template {
+  id: number;
+  name: string;
+  version: number;
+}
+
 export interface Binding {
   id: number;
   repo_id: number;

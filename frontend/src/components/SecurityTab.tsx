@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
+import { useRepos } from "../hooks/useRepos";
 import { EmptyState, ErrorBanner, IconShield, ScoreRing, SeverityPill, TableSkeleton } from "./ui";
 import { FindingFix } from "./FindingFix";
 import type { Finding } from "../types";
@@ -22,14 +23,25 @@ const SEV_COLOR: Record<string, string> = {
   info: "var(--sev-info)",
 };
 
-export function SecurityTab({ repoId }: { repoId: number | null }) {
+export function SecurityTab({
+  repoId,
+  onSelectRepo,
+}: {
+  repoId: number | null;
+  onSelectRepo?: (id: number) => void;
+}) {
   const [severity, setSeverity] = useState("");
+  const { byId } = useRepos();
   const { data: scorecard } = useQuery({ queryKey: ["scorecard"], queryFn: api.scorecard });
   const { data: findingsPage, isLoading, isError, error } = useQuery({
     queryKey: ["findings", repoId, severity],
     queryFn: () => api.findings({ repo_id: repoId ?? undefined, severity: severity || undefined }),
   });
   const findings = findingsPage?.items ?? [];
+  // Hide the Reference column entirely when no finding carries one (it was all "—").
+  const showRef = findings.some((f) => f.ref);
+  // Repo column is only useful in the org-wide view (a single repo makes it redundant).
+  const showRepo = repoId == null;
 
   const total = scorecard
     ? Object.values(scorecard.by_severity).reduce((a, b) => a + b, 0)
@@ -124,28 +136,48 @@ export function SecurityTab({ repoId }: { repoId: number | null }) {
             <thead>
               <tr>
                 <th>Severity</th>
+                {showRepo && <th>Repository</th>}
                 <th>Type</th>
                 <th>Path</th>
-                <th>Reference</th>
+                {showRef && <th>Reference</th>}
                 <th>Finding</th>
-                <th aria-label="fix" />
+                <th>Fix</th>
               </tr>
             </thead>
             <tbody>
-              {findings.map((f: Finding) => (
-                <tr className="row" key={f.id}>
-                  <td>
-                    <SeverityPill severity={f.severity} />
-                  </td>
-                  <td className="muted">{f.finding_type.replace(/_/g, " ")}</td>
-                  <td className="mono">{f.path ?? "—"}</td>
-                  <td className="mono">{f.ref ?? "—"}</td>
-                  <td>{f.message}</td>
-                  <td className="actions">
-                    <FindingFix finding={f} />
-                  </td>
-                </tr>
-              ))}
+              {findings.map((f: Finding) => {
+                const repo = byId.get(f.repo_id);
+                const repoName = repo ? `${repo.owner}/${repo.name}` : `#${f.repo_id}`;
+                return (
+                  <tr className="row" key={f.id}>
+                    <td>
+                      <SeverityPill severity={f.severity} />
+                    </td>
+                    {showRepo && (
+                      <td className="muted">
+                        {onSelectRepo ? (
+                          <button
+                            className="link-cell"
+                            onClick={() => onSelectRepo(f.repo_id)}
+                            title="Filter to this repository"
+                          >
+                            {repoName}
+                          </button>
+                        ) : (
+                          repoName
+                        )}
+                      </td>
+                    )}
+                    <td className="muted">{f.finding_type.replace(/_/g, " ")}</td>
+                    <td className="mono">{f.path ?? "—"}</td>
+                    {showRef && <td className="mono">{f.ref ?? "—"}</td>}
+                    <td>{f.message}</td>
+                    <td className="actions">
+                      <FindingFix finding={f} />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

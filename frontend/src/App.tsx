@@ -65,6 +65,11 @@ export default function App() {
     setWorkflow(wf);
   }
 
+  // The repo tree only scopes the repo-centric tabs; the fleet-wide tabs (Radar, Policy,
+  // Pipelines, Campaigns, Repos) ignore a selection, so we hide it there rather than show an
+  // always-on panel that does nothing on those views.
+  const showTree = tab === "runs" || tab === "security" || tab === "drift";
+
   return (
     <div className="app">
       <NavRail tabs={tabs} active={tab} onSelect={setTab} theme={theme} onToggleTheme={toggle} />
@@ -95,13 +100,15 @@ export default function App() {
           <SettingsMenu />
         </header>
 
-        <div className="body">
-          <RepoTree
-            selectedRepoId={repoId}
-            selectedWorkflow={workflow}
-            onSelectRepo={selectRepo}
-            onSelectWorkflow={selectWorkflow}
-          />
+        <div className={showTree ? "body" : "body no-tree"}>
+          {showTree && (
+            <RepoTree
+              selectedRepoId={repoId}
+              selectedWorkflow={workflow}
+              onSelectRepo={selectRepo}
+              onSelectWorkflow={selectWorkflow}
+            />
+          )}
           <main className="content">
             {tab === "runs" && (
               <RunGrid
@@ -112,7 +119,7 @@ export default function App() {
                 selectedRunId={selectedRun?.id ?? null}
               />
             )}
-            {tab === "security" && <SecurityTab repoId={repoId} />}
+            {tab === "security" && <SecurityTab repoId={repoId} onSelectRepo={selectRepo} />}
             {tab === "policy" && <PolicyTab />}
             {tab === "radar" && <RadarTab />}
             {tab === "drift" && <DriftTab repoId={repoId} />}

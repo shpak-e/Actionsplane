@@ -15,6 +15,7 @@ import type {
   Run,
   Scorecard,
   SimulationReport,
+  Template,
   Workflow,
 } from "./types";
 
@@ -90,6 +91,7 @@ export const api = {
   scorecard: () => get<Scorecard>("/audit/scorecard"),
   drift: (repoId?: number) =>
     get<Binding[]>(`/drift${repoId != null ? `?repo_id=${repoId}` : ""}`),
+  templates: () => get<Template[]>("/templates"),
   driftDetail: (bindingId: number) => get<DriftDetail>(`/drift/${bindingId}/detail`),
   rerun: (runId: number) => post<{ status: string }>(`/runs/${runId}/rerun`),
   mode: () => get<Mode>("/mode"),

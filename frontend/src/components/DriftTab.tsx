@@ -14,6 +14,8 @@ export function DriftTab({ repoId }: { repoId: number | null }) {
     queryKey: ["drift", repoId],
     queryFn: () => api.drift(repoId ?? undefined),
   });
+  const { data: templates = [] } = useQuery({ queryKey: ["templates"], queryFn: api.templates });
+  const templateName = new Map(templates.map((t) => [t.id, t.name]));
 
   // A selected binding takes over the whole tab as a full-page diff view.
   if (openBinding != null) {
@@ -72,13 +74,15 @@ export function DriftTab({ repoId }: { repoId: number | null }) {
                       {repo ? `${repo.owner}/${repo.name}` : `#${b.repo_id}`}
                     </td>
                     <td className="mono">{b.path}</td>
-                    <td className="muted">#{b.template_id}</td>
+                    <td className="muted">{templateName.get(b.template_id) ?? `#${b.template_id}`}</td>
                     <td>
                       <DriftPill severity={b.drift_severity} />
                     </td>
                     <td className="muted">{relativeTime(b.last_drift_check_at)}</td>
                     <td className="actions">
-                      <span className="btn sm">View diff</span>
+                      <button className="btn sm" onClick={() => setOpenBinding(b.id)}>
+                        View diff
+                      </button>
                     </td>
                   </tr>
                 );

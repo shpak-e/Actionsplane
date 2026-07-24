@@ -217,6 +217,7 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ---------- body: repo tree + content ---------- */
 .body { flex: 1; display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 0; }
+.body.no-tree { grid-template-columns: 1fr; }
 
 .sidebar {
   border-right: 1px solid var(--border); background: var(--surface-warm);
@@ -544,6 +545,10 @@ td.actions .btn, td.actions .icon-btn { margin-left: 4px; }
 .campaign-target .ct-err { color: var(--fail); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .campaign-target .diff { max-height: 340px; border-top: 1px solid var(--border); }
 .campaign-target .diff-line { padding-left: 8px; }
+
+/* a table cell that acts as a filter link (e.g. Security → filter by repo) */
+.link-cell { background: none; border: none; padding: 0; font: inherit; color: var(--fg-muted); cursor: pointer; border-bottom: 1px dashed var(--border-strong); }
+.link-cell:hover { color: var(--accent); border-bottom-color: var(--accent); }
 
 .toast { margin-top: 12px; padding: 10px 12px; border-radius: var(--r-sm); font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .toast.ok { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok-border); }
