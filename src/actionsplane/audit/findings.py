@@ -19,6 +19,10 @@ class Finding:
     severity: Severity
     message: str
     ref: str | None = None  # the `uses:` string, job id, or step locus the finding is about
+    # Workflow file the finding is in. The audit engine leaves this None (it supplies the path at
+    # ``as_row`` time); the SARIF path sets it from the stored row so alerts point at the real file
+    # rather than a placeholder directory. Not part of the fingerprint.
+    path: str | None = None
 
     def as_row(
         self, *, repo_id: int, path: str | None = None, workflow_id: int | None = None

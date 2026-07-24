@@ -36,12 +36,13 @@ _LEVEL = {
 def _result(finding: Finding) -> dict:
     location: dict = {}
     if finding.ref or finding.message:
-        # Code Scanning requires a physicalLocation; we point at the workflow path when we have
-        # one (stored on the row as `path`, not on Finding — caller can supply via locations
-        # extension if desired). We always emit *some* location to avoid SARIF rejection.
+        # Code Scanning requires a physicalLocation. Point at the finding's actual workflow file
+        # when known (the SARIF service threads it in from the stored row); fall back to the
+        # workflows dir only when path is absent. startLine 1 is a file-level anchor — the audit
+        # engine doesn't track line numbers yet, and these policy findings apply to the whole file.
         location = {
             "physicalLocation": {
-                "artifactLocation": {"uri": ".github/workflows/"},
+                "artifactLocation": {"uri": finding.path or ".github/workflows/"},
                 "region": {"startLine": 1},
             }
         }
