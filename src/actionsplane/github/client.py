@@ -401,6 +401,27 @@ class GitHubClient:
         resp.raise_for_status()
         return resp.text.strip()
 
+    async def is_immutable_release(self, owner: str, repo: str, tag: str) -> bool:
+        """True if ``tag`` is a GitHub *immutable release* (GA 2025-10) — a tamper-proof tag.
+
+        Authoritative signal: the release object's ``immutable`` boolean (releases-by-tag endpoint).
+        A tag with no release (404) is not immutable. Any other error is treated as "not proven
+        immutable" so a transient failure never downgrades the audit into a false all-clear.
+        """
+        try:
+            resp = await self._client.get(
+                f"{self._repo(owner, repo)}/releases/tags/{quote(tag)}",
+                headers=self._headers,
+            )
+        except httpx.HTTPError:
+            return False
+        if resp.status_code == 404:
+            return False
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        return isinstance(data, dict) and data.get("immutable") is True
+
     async def get_ref_sha(self, owner: str, repo: str, branch: str) -> str:
         """SHA the head of a branch points at (base for a new branch)."""
         resp = await self._client.get(

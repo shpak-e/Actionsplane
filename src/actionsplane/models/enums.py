@@ -12,6 +12,10 @@ class PinState(StrEnum):
     BRANCH_PINNED = "branch"  # uses: actions/checkout@main
     TAG_PINNED = "tag"  # uses: actions/checkout@v4
     SHA_PINNED = "sha"  # uses: actions/checkout@<40-hex>
+    # A tag backed by a GitHub *immutable release* (GA 2025-10): the tag is protected — it can't be
+    # moved or deleted — so it's tamper-proof like a SHA, but still human-readable and
+    # Dependabot-updatable. Only assigned when proven immutable via the API (never guessed).
+    IMMUTABLE = "immutable"  # uses: actions/checkout@v4  where v4 is an immutable release
     LOCAL = "local"  # uses: ./.github/actions/foo  (same-repo, no pinning needed)
     DOCKER = "docker"  # uses: docker://alpine:3.20
     UNKNOWN_REF = "unknown"  # @stable, @release-2024 — could be mutable; assume worst

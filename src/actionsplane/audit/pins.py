@@ -41,8 +41,18 @@ class UsesRef:
         return None
 
 
-def classify(uses: str) -> UsesRef:
+def ref_key(owner: str, repo: str, ref: str) -> str:
+    """Canonical ``owner/repo@ref`` key used to look a reference up in an immutable-ref set."""
+    return f"{owner}/{repo}@{ref}"
+
+
+def classify(uses: str, *, immutable_refs: frozenset[str] | set[str] | None = None) -> UsesRef:
     """Classify a single ``uses:`` reference string.
+
+    ``immutable_refs`` is an optional set of ``owner/repo@ref`` strings **proven** (via the API) to
+    be backed by a GitHub immutable release; a tag-pinned ref found there is upgraded from
+    ``TAG_PINNED`` to ``IMMUTABLE``. Default ``None`` means "nothing proven immutable" — so
+    behaviour is unchanged and a tag is never optimistically treated as safe.
 
     Examples
     --------
@@ -72,7 +82,16 @@ def classify(uses: str) -> UsesRef:
         # No ref at all — e.g. "actions/checkout". Unpinned (resolves to default branch).
         return UsesRef(raw, owner, repo, subpath, None, PinState.UNPINNED)
 
-    return UsesRef(raw, owner, repo, subpath, ref, _classify_ref(ref))
+    state = _classify_ref(ref)
+    if (
+        state is PinState.TAG_PINNED
+        and immutable_refs
+        and owner
+        and repo
+        and ref_key(owner, repo, ref) in immutable_refs
+    ):
+        state = PinState.IMMUTABLE
+    return UsesRef(raw, owner, repo, subpath, ref, state)
 
 
 def _classify_ref(ref: str) -> PinState:
@@ -97,6 +116,10 @@ def _split_action_name(name: str) -> tuple[str | None, str | None, str | None]:
     return owner, repo, subpath
 
 
-def is_pinned_safely(uses: str) -> bool:
-    """True only for SHA-pinned or local references (the supply-chain-safe states)."""
-    return classify(uses).pin_state in (PinState.SHA_PINNED, PinState.LOCAL)
+def is_pinned_safely(uses: str, *, immutable_refs: frozenset[str] | set[str] | None = None) -> bool:
+    """True for the supply-chain-safe pin states: SHA-pinned, local, or a proven immutable tag."""
+    return classify(uses, immutable_refs=immutable_refs).pin_state in (
+        PinState.SHA_PINNED,
+        PinState.IMMUTABLE,
+        PinState.LOCAL,
+    )
