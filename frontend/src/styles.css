@@ -102,7 +102,7 @@
   --r-lg: 14px;
   --pill: 999px;
 
-  --rail-w: 74px;
+  --rail-w: 88px;
   --sidebar-w: 272px;
   --topbar-h: 56px;
 }
@@ -153,18 +153,30 @@ button { font-family: inherit; cursor: pointer; }
   border-right: 1px solid var(--border);
   box-shadow: var(--edge);
 }
-.rail-mark { width: 34px; height: 34px; display: grid; place-items: center; margin-bottom: 8px; }
+/* The brand mark doubles as the Home button (clickable, with the same active/hover affordance
+   as a nav button). */
+.rail-home {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 72px; padding: 8px 4px 9px; margin-bottom: 6px;
+  border: none; background: none; color: var(--fg-subtle);
+  border-radius: var(--r); cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.rail-home:hover { background: var(--surface-3); color: var(--fg); }
+.rail-home.active { background: var(--accent-weak); color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+.rail-home-mark { width: 38px; height: 38px; display: grid; place-items: center; }
+.rail-home-label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; text-transform: none; }
 .rail-nav { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 100%; }
 .rail-item { width: 100%; display: flex; flex-direction: column; align-items: center; }
 .rail-group-label {
-  width: 100%; text-align: center; margin: 8px 0 2px;
-  font-family: var(--mono); font-size: 8px; font-weight: 700; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--fg-faint);
+  width: 100%; text-align: center; margin: 12px 0 4px;
+  font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--fg-muted);
 }
-.rail-item:first-child .rail-group-label { margin-top: 0; }
+.rail-item:first-child .rail-group-label { margin-top: 2px; }
 .rail-btn {
   position: relative;
-  width: 56px; min-height: 52px;
+  width: 66px; min-height: 54px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
   border: none; background: none; color: var(--fg-subtle);
   border-radius: var(--r); padding: 8px 4px;
@@ -173,7 +185,7 @@ button { font-family: inherit; cursor: pointer; }
 .rail-btn:hover { background: var(--surface-3); color: var(--fg); }
 .rail-btn.active { background: var(--accent-weak); color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
 .rail-btn .rail-label {
-  font-size: 10px; font-weight: 600; letter-spacing: 0.01em;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.01em;
   font-family: var(--mono); text-transform: none;
 }
 /* Neutral attention badge — a count of "needs attention", not an error alarm (consistent across
@@ -223,6 +235,11 @@ button { font-family: inherit; cursor: pointer; }
 .live .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
 .live.on { color: var(--fg); }
 .live.on .dot { background: var(--ok); animation: pulse 1.8s ease-in-out infinite; }
+/* Disconnected → an actionable Reconnect button (was a dead status pill). */
+.live.reconnect { cursor: pointer; color: var(--warn, #d9a441); border-color: color-mix(in srgb, var(--warn, #d9a441) 40%, var(--border)); }
+.live.reconnect:hover { background: var(--surface-3); color: var(--fg); }
+.live.reconnect .dot { background: var(--warn, #d9a441); animation: pulse 1.8s ease-in-out infinite; }
+.live.reconnect .gi { margin-left: 1px; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* topbar scope chip — the current repo filter, shown on the repo-scoped tabs */
@@ -796,3 +813,18 @@ td.actions .btn, td.actions .icon-btn { margin-left: 4px; }
 th.num, td.num { text-align: right; }
 .cost-bar { height: 4px; margin-top: 5px; background: var(--surface-3); border-radius: 3px; overflow: hidden; max-width: 320px; }
 .cost-bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+
+/* Cost optimization tips (expandable per workflow) */
+.cost-warn-dot { display: inline-block; width: 8px; height: 8px; margin-left: 7px; vertical-align: middle; border-radius: 50%; background: var(--warn, #d9a441); }
+th.cost-tip-col, td.cost-tip-col { width: 34px; padding-right: 0; }
+.cost-row.has-tips { cursor: pointer; }
+.cost-tip-btn { display: inline-flex; align-items: center; gap: 1px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--fg-muted); }
+.cost-row.has-tips:hover .cost-tip-btn { background: var(--surface-3); color: var(--fg); }
+.cost-tip-btn.warn { color: var(--warn, #d9a441); border-color: color-mix(in srgb, var(--warn, #d9a441) 40%, var(--border)); }
+.cost-tip-btn .gi.rot90 { transform: rotate(90deg); transition: transform 0.15s; }
+.cost-tips-row > td { padding: 0 14px 12px; background: var(--surface-1); }
+.cost-tips { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-left: 2px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0; }
+.cost-tip { display: flex; gap: 9px; font-size: 13px; line-height: 1.5; color: var(--fg-muted); }
+.cost-tip .cost-tip-ico { flex: none; margin-top: 2px; color: var(--fg-faint); }
+.cost-tip.warn .cost-tip-ico { color: var(--warn, #d9a441); }
+.cost-tip-fix { display: block; margin-top: 3px; font-size: 12px; color: var(--accent); }

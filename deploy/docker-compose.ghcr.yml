@@ -1,0 +1,128 @@
+# Prebuilt-image stack — pulls the four component images from GHCR instead of building from source,
+# and (optionally) auto-updates them when a new `:edge` is published.
+#
+#   # 1. get the images (public packages need no login; private ones do):
+#   #    echo $GHCR_PAT | docker login ghcr.io -u <you> --password-stdin
+#   docker compose -f deploy/docker-compose.ghcr.yml pull
+#   docker compose -f deploy/docker-compose.ghcr.yml up -d
+#
+#   open http://localhost:3001        # dashboard
+#
+# Pin a version with ACTIONSPLANE_TAG (defaults to `edge`, the rolling build of master):
+#   ACTIONSPLANE_TAG=0.1.0 docker compose -f deploy/docker-compose.ghcr.yml up -d
+#
+# Auto-reload: the `watchtower` service polls GHCR and restarts a container when its tag moves.
+# It only touches services labelled `com.centurylinklabs.watchtower.enable=true` (below). Disable
+# it with `--scale watchtower=0` if you'd rather update by hand (`pull && up -d`).
+#
+# GitHub App / offline env vars are the same as docker-compose.full.yml — set them in a .env file
+# next to this one (`--env-file`) or export them before `up`.
+
+x-app-env: &app-env
+  ACTIONSPLANE_DATABASE_URL: postgresql+asyncpg://actionsplane:actionsplane@postgres:5432/actionsplane
+  ACTIONSPLANE_REDIS_URL: redis://:${REDIS_PASSWORD:-actionsplane}@redis:6379/0
+
+x-watch: &watch
+  labels:
+    com.centurylinklabs.watchtower.enable: "true"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: actionsplane
+      POSTGRES_PASSWORD: actionsplane
+      POSTGRES_DB: actionsplane
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U actionsplane"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-actionsplane}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-actionsplane}
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot migration. Reuses the api image (it ships alembic.ini + migrations/).
+  migrate:
+    image: ghcr.io/shpak-e/actionsplane-api:${ACTIONSPLANE_TAG:-edge}
+    environment: *app-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    image: ghcr.io/shpak-e/actionsplane-api:${ACTIONSPLANE_TAG:-edge}
+    <<: *watch
+    environment: *app-env
+    ports:
+      - "8000:8000"
+    networks:
+      default:
+        aliases:
+          - actionsplane-api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  ingestor:
+    image: ghcr.io/shpak-e/actionsplane-ingestor:${ACTIONSPLANE_TAG:-edge}
+    <<: *watch
+    environment: *app-env
+    ports:
+      - "8001:8001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    image: ghcr.io/shpak-e/actionsplane-worker:${ACTIONSPLANE_TAG:-edge}
+    <<: *watch
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    image: ghcr.io/shpak-e/actionsplane-frontend:${ACTIONSPLANE_TAG:-edge}
+    <<: *watch
+    ports:
+      - "3001:80"
+    depends_on:
+      - api
+
+  # Polls GHCR every 5 min and rolls any watched service whose tag moved (e.g. a new `:edge`).
+  # Mounts the Docker socket read-only where possible; it needs write to restart containers.
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"      # only touch services labelled above
+      WATCHTOWER_CLEANUP: "true"           # prune the old image after a successful pull
+      WATCHTOWER_POLL_INTERVAL: "300"      # seconds
+      WATCHTOWER_ROLLING_RESTART: "true"   # restart one at a time, not all at once
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  pgdata:

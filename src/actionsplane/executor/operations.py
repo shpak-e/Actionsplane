@@ -207,10 +207,48 @@ def bump_action_version(
     return EditResult(new_text=out.getvalue(), changes=changes)
 
 
+def add_concurrency(
+    text: str, resolver: ShaResolver | None = None, *, params: dict | None = None
+) -> EditResult:
+    """Add a top-level ``concurrency:`` block so overlapping runs on the same ref can't race
+    (fixes MISSING_CONCURRENCY). Default group is ``${{ github.workflow }}-${{ github.ref }}`` with
+    ``cancel-in-progress: true`` — the community convention that supersedes an in-flight run when a
+    new commit lands on the same branch/PR. ``params`` overrides group/cancel_in_progress.
+
+    Idempotent: a workflow that already has a ``concurrency:`` key is left untouched (empty diff).
+    Inserted right after ``permissions:``/``on:``/``name:`` so the diff reads naturally.
+    """
+    group = (params or {}).get("group") or "${{ github.workflow }}-${{ github.ref }}"
+    cancel = (params or {}).get("cancel_in_progress")
+    cancel = True if cancel is None else bool(cancel)
+    yaml = _rt_yaml()
+    data = yaml.load(io.StringIO(text))
+    if not data or "concurrency" in data:
+        return EditResult(new_text=text, changes=[])
+
+    block = CommentedMap()
+    block["group"] = group
+    block["cancel-in-progress"] = cancel
+    keys = list(data.keys())
+    pos = next(
+        (keys.index(a) + 1 for a in ("permissions", "on", "name") if a in keys),
+        0,
+    )
+    data.insert(pos, "concurrency", block)
+
+    out = io.StringIO()
+    yaml.dump(data, out)
+    return EditResult(
+        new_text=out.getvalue(),
+        changes=[f"add concurrency group `{group}` (cancel-in-progress: {str(cancel).lower()})"],
+    )
+
+
 # Operation registry — name -> callable(text, resolver=None, *, params=None) -> EditResult
 OPERATIONS: dict[str, Callable[..., EditResult]] = {
     "pin-shas": pin_workflow_to_sha,
     "set-permissions": set_workflow_permissions,
     "swap-runs-on": swap_runs_on,
     "bump-action-version": bump_action_version,
+    "add-concurrency": add_concurrency,
 }

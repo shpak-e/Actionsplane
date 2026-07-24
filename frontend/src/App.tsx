@@ -21,7 +21,6 @@ import {
   BrandCampaigns,
   BrandCost,
   BrandDrift,
-  BrandHome,
   BrandPipelines,
   BrandPolicy,
   BrandRadar,
@@ -30,6 +29,7 @@ import {
   BrandSecurity,
   BrandSettings,
   IconKey,
+  IconRefresh,
   IconRepo,
   IconX,
 } from "./components/ui";
@@ -59,7 +59,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [selectedRun, setSelectedRun] = useState<Run | null>(null);
   const [firstRunDismissed, setFirstRunDismissed] = useState(false);
-  const { connected } = useEventStream();
+  const { connected, reconnect } = useEventStream();
   const { data: mode } = useMode();
   const { theme, toggle } = useTheme();
   const hasToken = useHasOperateToken();
@@ -78,12 +78,6 @@ export default function App() {
   ).length;
 
   const tabs: RailTab<Tab>[] = [
-    {
-      id: "home",
-      label: "Home",
-      icon: <BrandHome size={22} />,
-      hint: "Your customizable fleet overview",
-    },
     {
       id: "runs",
       label: "Runs",
@@ -183,7 +177,14 @@ export default function App() {
 
   return (
     <div className="app">
-      <NavRail tabs={tabs} active={tab} onSelect={setTab} theme={theme} onToggleTheme={toggle} />
+      <NavRail
+        tabs={tabs}
+        active={tab}
+        onSelect={setTab}
+        theme={theme}
+        onToggleTheme={toggle}
+        homeId="home"
+      />
 
       <div className="workspace">
         <header className="topbar">
@@ -211,18 +212,21 @@ export default function App() {
 
           {mode?.offline ? (
             <SyncButton syncedAt={mode.synced_at} />
+          ) : connected ? (
+            <span className="live on" title="Live — receiving run updates as they happen">
+              <span className="dot" />
+              Live
+            </span>
           ) : (
-            <span
-              className={connected ? "live on" : "live"}
-              title={
-                connected
-                  ? "Live — receiving run updates as they happen"
-                  : "Reconnecting to the live update stream (data still loads on refresh)"
-              }
+            <button
+              className="live reconnect"
+              onClick={reconnect}
+              title="Live updates dropped — click to reconnect now (data still loads on refresh)"
             >
               <span className="dot" />
-              {connected ? "Live" : "Reconnecting…"}
-            </span>
+              Reconnect
+              <IconRefresh size={12} />
+            </button>
           )}
 
           <SettingsMenu />

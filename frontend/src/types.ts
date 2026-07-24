@@ -104,6 +104,13 @@ export interface NotificationEvent {
   description: string;
 }
 
+export interface CostSuggestion {
+  kind: string; // queue | failures | duration | share
+  severity: string; // info | warn
+  message: string;
+  fix_operation: string | null;
+}
+
 export interface FleetCostRow {
   workflow_id: number;
   repo: string | null;
@@ -115,6 +122,7 @@ export interface FleetCostRow {
   p95_duration_s: number | null;
   p95_queue_s: number | null;
   last_run_at: string | null;
+  suggestions: CostSuggestion[];
 }
 
 export interface FleetCost {

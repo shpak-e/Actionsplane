@@ -45,18 +45,31 @@ Existing tools each cover a fragment: scanners find problems in one repo, bots b
 
 ## Quickstart
 
+**Fastest — prebuilt images, nothing to build.** Pulls the four component images from GHCR and (by
+default) keeps them auto-updated as new versions ship:
+
 ```sh
-# full local stack: Postgres + Redis + API + ingestor + worker, auto-migrated
-docker compose -f deploy/docker-compose.full.yml up --build
+docker compose -f deploy/docker-compose.ghcr.yml pull
+docker compose -f deploy/docker-compose.ghcr.yml up -d
 
 open http://localhost:3001        # dashboard
 open http://localhost:8000/docs   # API
+```
+
+> If the images are still private (they are until first published & flipped to Public), `docker login
+> ghcr.io` first — see [deploy/README.md](deploy/README.md#the-images).
+
+**Or build from source** (the dev sandbox):
+
+```sh
+# full local stack: Postgres + Redis + API + ingestor + worker, auto-migrated
+docker compose -f deploy/docker-compose.full.yml up --build
 
 # demo data, no GitHub App needed:
 PYTHONPATH=src python scripts/seed_local.py
 ```
 
-Or for development:
+**Or for iterating on the code:**
 
 ```sh
 make install   # uv sync
@@ -77,7 +90,12 @@ actionsplane campaign create / status               # run the campaign
 
 ## Deploy
 
-Docker Compose (dev + full stacks), **Kubernetes** via kustomize (`deploy/k8s/`) or **Helm** (`deploy/helm/actionsplane/`). Ships hardened by default: non-root read-only containers, default-deny NetworkPolicies, Redis auth, ingress TLS, two-tier API tokens (operate/read-only).
+Four paths — Compose (build-from-source or prebuilt+auto-reload), Kubernetes via kustomize
+(`deploy/k8s/`) or Helm (`deploy/helm/actionsplane/`) — all covered in **[deploy/README.md](deploy/README.md)**,
+including how the GHCR images are built (`edge` on every `master` push, semver on tags) and how to
+enable auto-updates (Watchtower for Compose, Keel for k8s). Ships hardened by default: non-root
+read-only containers, default-deny NetworkPolicies, Redis auth, ingress TLS, two-tier API tokens
+(operate/read-only).
 
 ## How it's built
 

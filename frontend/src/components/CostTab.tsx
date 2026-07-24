@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { fmtSecs, relativeTime } from "../lib/format";
-import { EmptyState, ErrorBanner, IconActivity, TableSkeleton } from "./ui";
+import { operationLabel } from "../lib/labels";
+import { EmptyState, ErrorBanner, IconActivity, IconChevron, IconZap, TableSkeleton } from "./ui";
 import type { FleetCostRow } from "../types";
 
 type SortKey = "total_minutes" | "p95_duration_s" | "p95_queue_s" | "runs";
@@ -25,6 +26,7 @@ function fmtMin(m: number): string {
 export function CostTab() {
   const [days, setDays] = useState(30);
   const [sort, setSort] = useState<SortKey>("total_minutes");
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["fleet-cost", days],
     queryFn: () => api.fleetCost(days),
@@ -32,6 +34,20 @@ export function CostTab() {
 
   const rows = [...(data?.rows ?? [])].sort((a, b) => (b[sort] ?? 0) - (a[sort] ?? 0));
   const max = Math.max(1, ...rows.map((r) => (r[sort] as number) ?? 0));
+
+  // Fleet-wide optimization opportunities: how many workflows have at least one suggestion, and
+  // how many carry a warn-level one (failing / queuing) — the headline "there's money on the table".
+  const withTips = rows.filter((r) => r.suggestions.length > 0);
+  const warnCount = rows.filter((r) => r.suggestions.some((s) => s.severity === "warn")).length;
+
+  function toggle(id: number) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   return (
     <section>
@@ -68,6 +84,13 @@ export function CostTab() {
             <div className="dash-metric-val">{rows.length}</div>
             <div className="dash-metric-label">Workflows with runs</div>
           </div>
+          <div className="dash-metric">
+            <div className="dash-metric-val">
+              {withTips.length}
+              {warnCount > 0 && <span className="cost-warn-dot" title={`${warnCount} need attention`} />}
+            </div>
+            <div className="dash-metric-label">With optimization tips</div>
+          </div>
           <div className="seg cost-sort">
             {SORTS.map((s) => (
               <button
@@ -96,6 +119,7 @@ export function CostTab() {
           <table>
             <thead>
               <tr>
+                <th className="cost-tip-col" />
                 <th>Workflow</th>
                 <th>Repository</th>
                 <th className="num">Runs</th>
@@ -108,27 +132,73 @@ export function CostTab() {
             <tbody>
               {rows.map((r: FleetCostRow) => {
                 const barVal = (r[sort] as number) ?? 0;
+                const hasTips = r.suggestions.length > 0;
+                const isOpen = expanded.has(r.workflow_id);
+                const worst = r.suggestions.some((s) => s.severity === "warn") ? "warn" : "info";
                 return (
-                  <tr className="row" key={r.workflow_id}>
-                    <td>
-                      <span style={{ color: "var(--fg)", fontWeight: 500 }}>{r.name}</span>
-                      {r.failures > 0 && (
-                        <span className="cost-fail mono" title="Failed runs in the window">
-                          {" "}
-                          · {r.failures} failed
-                        </span>
-                      )}
-                      <div className="cost-bar">
-                        <span style={{ width: `${(barVal / max) * 100}%` }} />
-                      </div>
-                    </td>
-                    <td className="muted mono">{r.repo ?? "—"}</td>
-                    <td className="num mono">{r.runs}</td>
-                    <td className="num mono cost-total">{fmtMin(r.total_minutes)}</td>
-                    <td className="num mono muted">{fmtSecs(r.avg_duration_s)}</td>
-                    <td className="num mono muted">{fmtSecs(r.p95_duration_s)}</td>
-                    <td className="num mono muted">{fmtSecs(r.p95_queue_s)}</td>
-                  </tr>
+                  <Fragment key={r.workflow_id}>
+                    <tr
+                      className={hasTips ? "row cost-row has-tips" : "row cost-row"}
+                      onClick={hasTips ? () => toggle(r.workflow_id) : undefined}
+                    >
+                      <td className="cost-tip-col">
+                        {hasTips && (
+                          <button
+                            className={`cost-tip-btn ${worst}`}
+                            aria-label={`${r.suggestions.length} optimization tips`}
+                            aria-expanded={isOpen}
+                            title={`${r.suggestions.length} optimization ${
+                              r.suggestions.length === 1 ? "tip" : "tips"
+                            }`}
+                          >
+                            <IconZap size={13} />
+                            <IconChevron size={11} className={isOpen ? "rot90" : ""} />
+                          </button>
+                        )}
+                      </td>
+                      <td>
+                        <span style={{ color: "var(--fg)", fontWeight: 500 }}>{r.name}</span>
+                        {r.failures > 0 && (
+                          <span className="cost-fail mono" title="Failed runs in the window">
+                            {" "}
+                            · {r.failures} failed
+                          </span>
+                        )}
+                        <div className="cost-bar">
+                          <span style={{ width: `${(barVal / max) * 100}%` }} />
+                        </div>
+                      </td>
+                      <td className="muted mono">{r.repo ?? "—"}</td>
+                      <td className="num mono">{r.runs}</td>
+                      <td className="num mono cost-total">{fmtMin(r.total_minutes)}</td>
+                      <td className="num mono muted">{fmtSecs(r.avg_duration_s)}</td>
+                      <td className="num mono muted">{fmtSecs(r.p95_duration_s)}</td>
+                      <td className="num mono muted">{fmtSecs(r.p95_queue_s)}</td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="cost-tips-row">
+                        <td />
+                        <td colSpan={7}>
+                          <div className="cost-tips">
+                            {r.suggestions.map((s, i) => (
+                              <div className={`cost-tip ${s.severity}`} key={i}>
+                                <IconZap size={13} className="cost-tip-ico" />
+                                <div>
+                                  {s.message}
+                                  {s.fix_operation && (
+                                    <span className="cost-tip-fix">
+                                      One-click fix available: {operationLabel(s.fix_operation)} — open
+                                      it from the Security tab for this workflow.
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>

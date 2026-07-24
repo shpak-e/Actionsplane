@@ -27,6 +27,17 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- printf "%s/%s:%s" .ctx.Values.image.registry .name .ctx.Values.image.tag -}}
 {{- end -}}
 
+{{/* Keel auto-update annotations (empty unless keel.enabled) — for a Deployment's metadata. */}}
+{{- define "actionsplane.keelAnnotations" -}}
+{{- if .Values.keel.enabled }}
+keel.sh/policy: {{ .Values.keel.policy | quote }}
+keel.sh/trigger: {{ .Values.keel.trigger | quote }}
+{{- if eq .Values.keel.trigger "poll" }}
+keel.sh/pollSchedule: {{ .Values.keel.pollSchedule | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
 {{/* shared envFrom for app pods */}}
 {{- define "actionsplane.envFrom" -}}
 - configMapRef:

@@ -14,9 +14,9 @@ export type RailTab<T extends string> = {
 };
 
 /** The fast-forward run-fleet mark: three run triangles, the lead one in the accent color. */
-function Mark() {
+function Mark({ size = 34 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 32 32" width="30" height="30" aria-label="ActionsPlane">
+    <svg viewBox="0 0 32 32" width={size} height={size} aria-label="ActionsPlane">
       <rect
         x="0.75"
         y="0.75"
@@ -40,18 +40,31 @@ export function NavRail<T extends string>({
   onSelect,
   theme,
   onToggleTheme,
+  homeId,
 }: {
   tabs: RailTab<T>[];
   active: T;
   onSelect: (id: T) => void;
   theme: Theme;
   onToggleTheme: () => void;
+  /** The tab the brand mark navigates to (the logo doubles as the Home button). */
+  homeId?: T;
 }) {
   return (
     <aside className="rail" aria-label="Sections">
-      <div className="rail-mark">
-        <Mark />
-      </div>
+      {homeId != null && (
+        <button
+          className={active === homeId ? "rail-home active" : "rail-home"}
+          onClick={() => onSelect(homeId)}
+          aria-current={active === homeId}
+          title="Home — your customizable fleet overview"
+        >
+          <span className="rail-home-mark">
+            <Mark size={38} />
+          </span>
+          <span className="rail-home-label">Home</span>
+        </button>
+      )}
       <nav className="rail-nav">
         {tabs.map((t, i) => {
           const newGroup = t.group && t.group !== tabs[i - 1]?.group;

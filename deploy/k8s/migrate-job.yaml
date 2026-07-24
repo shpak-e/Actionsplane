@@ -22,7 +22,7 @@ spec:
           command: ["sh", "-c", "until pg_isready -h actionsplane-postgres -U actionsplane; do echo waiting; sleep 2; done"]
       containers:
         - name: migrate
-          image: ghcr.io/itamar/actionsplane-api:0.1.0  # same image as the api
+          image: ghcr.io/shpak-e/actionsplane-api:0.1.0  # same image as the api
           command: ["alembic", "upgrade", "head"]
           envFrom:
             - configMapRef: { name: actionsplane-config }

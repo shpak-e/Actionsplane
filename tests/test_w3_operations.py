@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from actionsplane.executor.operations import (
     OPERATIONS,
+    add_concurrency,
     bump_action_version,
     set_workflow_permissions,
     swap_runs_on,
@@ -34,7 +35,7 @@ jobs:
 
 
 def test_registry_has_all_w3_ops():
-    for name in ("set-permissions", "swap-runs-on", "bump-action-version"):
+    for name in ("set-permissions", "swap-runs-on", "bump-action-version", "add-concurrency"):
         assert name in OPERATIONS
 
 
@@ -100,3 +101,26 @@ def test_bump_action_version_requires_params():
 def test_bump_action_version_ignores_other_actions():
     res = bump_action_version(WF_NO_PERMS, params={"action": "actions/checkout", "to": "v4"})
     assert res.changed is False  # no actions/checkout in this workflow
+
+
+# --- add-concurrency --------------------------------------------------------------------------
+def test_add_concurrency_inserts_default_block():
+    res = add_concurrency(WF_NO_PERMS)
+    assert res.changed is True
+    assert "concurrency:" in res.new_text
+    assert "cancel-in-progress: true" in res.new_text
+    assert "${{ github.workflow }}-${{ github.ref }}" in res.new_text
+    # inserted after `on:`, before `jobs:`
+    assert res.new_text.index("concurrency:") < res.new_text.index("jobs:")
+
+
+def test_add_concurrency_idempotent():
+    once = add_concurrency(WF_NO_PERMS)
+    twice = add_concurrency(once.new_text)
+    assert twice.changed is False  # a concurrency block already exists
+
+
+def test_add_concurrency_custom_params():
+    res = add_concurrency(WF_NO_PERMS, params={"group": "deploy", "cancel_in_progress": False})
+    assert "group: deploy" in res.new_text
+    assert "cancel-in-progress: false" in res.new_text

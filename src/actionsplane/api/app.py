@@ -32,6 +32,7 @@ from actionsplane.api.schemas import (
     CampaignOut,
     CampaignSummaryOut,
     CampaignTargetOut,
+    CostSuggestionOut,
     DriftDetailOut,
     FindingOut,
     FindingsPage,
@@ -110,6 +111,7 @@ from actionsplane.github.client import GitHubClient
 from actionsplane.governance.service import require_check_fleet
 from actionsplane.metrics import summarize_runs
 from actionsplane.metrics.compute import percentile
+from actionsplane.metrics.cost_advice import cost_suggestions
 from actionsplane.notifications import EVENT_TYPES
 from actionsplane.notifications import send_test as send_test_notification
 from actionsplane.notifications.service import safe_error, validate_destination
@@ -395,37 +397,84 @@ async def fleet_cost_metrics(
     workflows = {w.id: w for w in await list_all_workflows(session)}
     repos = {r.id: f"{r.owner}/{r.name}" for r in await list_repos(session, watched_only=False)}
 
+    # Workflows with an open "missing concurrency" finding lack a concurrency: block, so the queue
+    # advice can offer the one-click add-concurrency fix only where it would actually apply.
+    no_concurrency = {
+        f.workflow_id
+        for f in await open_findings(session, finding_type="missing_concurrency")
+        if f.workflow_id is not None
+    }
+
     by_wf: dict[int, list[dict]] = defaultdict(list)
     for rec in records:
         by_wf[rec["workflow_id"]].append(rec)
 
-    rows: list[FleetCostRow] = []
+    # First pass: compute the rollups (need the fleet total before advice on fleet-share).
     fleet_total = 0.0
+    stats: list[dict] = []
     for wid, recs in by_wf.items():
         durs = [x["duration_s"] for x in recs if x["duration_s"] is not None]
         queues = [x["queue_s"] for x in recs if x["queue_s"] is not None]
         total_s = sum(durs)
         fleet_total += total_s
         wf = workflows.get(wid)
-        name = (wf.name or wf.path.rsplit("/", 1)[-1]) if wf else str(wid)
+        stats.append(
+            {
+                "wid": wid,
+                "wf": wf,
+                "name": (wf.name or wf.path.rsplit("/", 1)[-1]) if wf else str(wid),
+                "runs": len(recs),
+                "failures": sum(1 for x in recs if x["conclusion"] == "failure"),
+                "total_s": total_s,
+                "durs": durs,
+                "queues": queues,
+                "p95_duration_s": percentile(durs, 95),
+                "p95_queue_s": percentile(queues, 95),
+                "last_run_at": max(
+                    (x["created_at"] for x in recs if x["created_at"]), default=None
+                ),
+            }
+        )
+
+    fleet_minutes = fleet_total / 60
+    rows: list[FleetCostRow] = []
+    for s in stats:
+        total_minutes = round(s["total_s"] / 60, 1)
+        advice = cost_suggestions(
+            runs=s["runs"],
+            failures=s["failures"],
+            total_minutes=total_minutes,
+            p95_duration_s=s["p95_duration_s"],
+            p95_queue_s=s["p95_queue_s"],
+            fleet_minutes=fleet_minutes,
+            has_concurrency=s["wid"] not in no_concurrency,
+        )
+        wf = s["wf"]
         rows.append(
             FleetCostRow(
-                workflow_id=wid,
+                workflow_id=s["wid"],
                 repo=repos.get(wf.repo_id) if wf else None,
-                name=name,
-                runs=len(recs),
-                failures=sum(1 for x in recs if x["conclusion"] == "failure"),
-                total_minutes=round(total_s / 60, 1),
-                avg_duration_s=round(total_s / len(durs), 1) if durs else None,
-                p95_duration_s=percentile(durs, 95),
-                p95_queue_s=percentile(queues, 95),
-                last_run_at=max((x["created_at"] for x in recs if x["created_at"]), default=None),
+                name=s["name"],
+                runs=s["runs"],
+                failures=s["failures"],
+                total_minutes=total_minutes,
+                avg_duration_s=round(s["total_s"] / len(s["durs"]), 1) if s["durs"] else None,
+                p95_duration_s=s["p95_duration_s"],
+                p95_queue_s=s["p95_queue_s"],
+                last_run_at=s["last_run_at"],
+                suggestions=[
+                    CostSuggestionOut(
+                        kind=a.kind,
+                        severity=a.severity,
+                        message=a.message,
+                        fix_operation=a.fix_operation,
+                    )
+                    for a in advice
+                ],
             )
         )
     rows.sort(key=lambda r: r.total_minutes, reverse=True)
-    return FleetCostOut(
-        window_days=days, total_minutes=round(fleet_total / 60, 1), rows=rows[:limit]
-    )
+    return FleetCostOut(window_days=days, total_minutes=round(fleet_minutes, 1), rows=rows[:limit])
 
 
 @router.get("/findings", response_model=FindingsPage)

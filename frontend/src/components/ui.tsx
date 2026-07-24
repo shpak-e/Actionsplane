@@ -61,6 +61,8 @@ export const IconSun = ({ size = 15, className }: IconProps) =>
   svg(size, className, <><circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" /></>);
 export const IconMoon = ({ size = 15, className }: IconProps) =>
   svg(size, className, <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />);
+export const IconZap = ({ size = 14, className }: IconProps) =>
+  svg(size, className, <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />);
 
 /* ---------- brand toolbar icons ----------
    Bespoke geometric glyphs in the logo-studies language: grey geometry + a single ember accent
