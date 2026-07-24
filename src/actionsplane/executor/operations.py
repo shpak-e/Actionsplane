@@ -66,7 +66,12 @@ def _eol_comment(node, key: str) -> str | None:
 
 
 def _pin_steps(steps, resolver: ShaResolver, changes: list[str]) -> None:
-    """Rewrite each step's `uses:` in place (mutates the ruamel sequence)."""
+    """Rewrite each step's `uses:` in place (mutates the ruamel sequence).
+
+    Immutability is handled upstream: the campaign's resolver returns None for a tag backed by an
+    immutable release (it's deliberately excluded from the resolved SHA map), so such a tag falls
+    through the ``not sha`` guard below and is left as-is — never rewritten to a raw SHA (W1).
+    """
     for step in steps:
         if not hasattr(step, "get") or "uses" not in step:
             continue

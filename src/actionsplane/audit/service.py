@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from actionsplane.audit.engine import audit_workflow
+from actionsplane.audit.immutable import resolve_immutable_refs
 from actionsplane.audit.parser import parse_workflow
 from actionsplane.db.models import Repo
 from actionsplane.db.repository import (
@@ -55,6 +56,12 @@ async def _audit_repo(
         except Exception:  # one bad file should not abort the whole repo audit
             log.warning("skipping unparseable workflow %s/%s:%s", repo.owner, repo.name, path)
 
+    # Still Phase 1 I/O: resolve which tag-pinned refs across all this repo's workflows are backed
+    # by immutable releases, so the audit doesn't nag to SHA-pin a tag that's already tamper-proof
+    # (W1). One bounded, ETag-cacheable lookup per distinct tag ref; done before the DB writes.
+    all_uses = {ref for _, wf in parsed for ref in wf.all_uses()}
+    immutable_refs = await resolve_immutable_refs(gh, all_uses)
+
     # Phase 2 — DB writes only (connection checked out here, released on commit).
     seen: set[str] = set()
     written = 0
@@ -62,7 +69,9 @@ async def _audit_repo(
         await upsert_workflow_relation(
             session, repo_id=repo.id, path=path, name=wf.name, descriptor=extract_relations(wf)
         )
-        for finding in audit_workflow(wf, publisher_allowlist=publisher_allowlist):
+        for finding in audit_workflow(
+            wf, publisher_allowlist=publisher_allowlist, immutable_refs=immutable_refs
+        ):
             row = finding.as_row(repo_id=repo.id, path=path)
             seen.add(row["fingerprint"])
             await upsert_finding(session, row)

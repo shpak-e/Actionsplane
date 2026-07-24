@@ -18,11 +18,16 @@ from actionsplane.models.workflow import Workflow
 _MAJOR_RE = re.compile(r"^(v?\d+)")
 
 
-def audit_pins(wf: Workflow) -> list[Finding]:
-    """Flag every non-SHA-pinned action reference (mutable refs are the attack surface)."""
+def audit_pins(wf: Workflow, *, immutable_refs: frozenset[str] | None = None) -> list[Finding]:
+    """Flag every non-SHA-pinned action reference (mutable refs are the attack surface).
+
+    A tag proven to be a GitHub immutable release (``immutable_refs``) is treated as safe and not
+    flagged — it's tamper-proof like a SHA but still updatable, so nagging to pin it to a raw SHA
+    would be a regression in maintainability for no security gain.
+    """
     findings: list[Finding] = []
     for ref in wf.all_uses():
-        u = classify(ref)
+        u = classify(ref, immutable_refs=immutable_refs)
         if u.pin_state in (PinState.UNPINNED, PinState.BRANCH_PINNED, PinState.UNKNOWN_REF):
             findings.append(
                 Finding(
@@ -163,10 +168,15 @@ def audit_concurrency(wf: Workflow) -> list[Finding]:
     return []
 
 
-def audit_workflow(wf: Workflow, *, publisher_allowlist: set[str] | None = None) -> list[Finding]:
+def audit_workflow(
+    wf: Workflow,
+    *,
+    publisher_allowlist: set[str] | None = None,
+    immutable_refs: frozenset[str] | None = None,
+) -> list[Finding]:
     """Run the full audit suite over one workflow and return all findings."""
     findings = [
-        *audit_pins(wf),
+        *audit_pins(wf, immutable_refs=immutable_refs),
         *audit_permissions(wf),
         *audit_deprecations(wf),
         *audit_concurrency(wf),

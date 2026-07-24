@@ -13,8 +13,9 @@ from dataclasses import dataclass
 
 import httpx
 
+from actionsplane.audit.immutable import resolve_immutable_refs
 from actionsplane.audit.parser import parse_workflow
-from actionsplane.audit.pins import classify
+from actionsplane.audit.pins import classify, ref_key
 from actionsplane.executor.operations import OPERATIONS, unified_diff
 from actionsplane.github.client import GitHubClient
 from actionsplane.models.enums import PinState
@@ -53,9 +54,17 @@ async def _resolve_pin_refs(
     except Exception:
         log.warning("skipping pin resolution for unparseable workflow %s", path)
         return resolved
-    for ref in set(wf.all_uses()):
+    uses = set(wf.all_uses())
+    # A tag backed by an immutable release is already tamper-proof and stays updatable — leave it
+    # rather than rewrite it to a raw SHA (W1). Excluding it from the resolved map means the pin
+    # operation's resolver returns None for it, so neither dry-run nor apply touches it (keeping the
+    # apply diff byte-identical to the dry-run one, since apply reuses this same map).
+    immutable = await resolve_immutable_refs(gh, uses)
+    for ref in uses:
         u = classify(ref)
         if u.pin_state in (PinState.TAG_PINNED, PinState.BRANCH_PINNED) and u.owner and u.repo:
+            if u.ref and ref_key(u.owner, u.repo, u.ref) in immutable:
+                continue  # proven immutable — don't resolve a SHA, so it won't be rewritten
             resolved[(u.owner, u.repo, u.ref)] = await gh.get_commit_sha(u.owner, u.repo, u.ref)
     return resolved
 
