@@ -12,6 +12,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from dataclasses import asdict
+from datetime import date
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
@@ -36,6 +37,7 @@ from actionsplane.api.schemas import (
     ModeOut,
     PipelineGraphOut,
     PolicySimulateIn,
+    RadarReportOut,
     RepoOut,
     RunOut,
     ScorecardOut,
@@ -44,6 +46,7 @@ from actionsplane.api.schemas import (
     TemplateOut,
     WorkflowOut,
 )
+from actionsplane.audit.deprecation_radar import scan_fleet
 from actionsplane.audit.sarif_service import upload_sarif_for_repo
 from actionsplane.audit.scorecard import build_scorecard
 from actionsplane.config import get_settings
@@ -454,6 +457,16 @@ async def simulate_policy_endpoint(
     )
     report = await simulate_policy(session, policy)
     return SimulationReportOut(**asdict(report))
+
+
+@router.get("/deprecations/radar", response_model=RadarReportOut)
+async def deprecation_radar_endpoint(
+    session: AsyncSession = Depends(get_session),
+) -> RadarReportOut:
+    """Deprecation Radar (W8): fleet impact inventory for GitHub's dated deprecations, sorted
+    overdue/urgent first. Read-only — matches the curated feed against stored workflow facts."""
+    report = await scan_fleet(session, as_of=date.today())
+    return RadarReportOut(**asdict(report))
 
 
 @router.get("/templates", response_model=list[TemplateOut])

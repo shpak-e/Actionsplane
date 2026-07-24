@@ -67,6 +67,17 @@ def _emits(workflow: Workflow) -> list[dict[str, Any]]:
     return out
 
 
+def _runner_labels(workflow: Workflow) -> list[str]:
+    """Distinct ``runs-on`` labels across the workflow's jobs (for deprecation-radar matching)."""
+    labels: set[str] = set()
+    for job in workflow.jobs.values():
+        if isinstance(job.runs_on, str):
+            labels.add(job.runs_on)
+        elif isinstance(job.runs_on, list):
+            labels.update(str(x) for x in job.runs_on)
+    return sorted(labels)
+
+
 def extract_relations(workflow: Workflow) -> dict[str, Any]:
     """Distil a workflow into its cross-workflow relation facts (storable JSON)."""
     triggers = _trigger_map(workflow.on)
@@ -104,6 +115,10 @@ def extract_relations(workflow: Workflow) -> dict[str, Any]:
         "dispatch_types": dispatch_types,
         "calls": calls,
         "emits": _emits(workflow),
+        # Facts the Deprecation Radar (W8) matches against, persisted so the fleet scan needs no
+        # re-fetch: the runner labels and action refs this workflow uses.
+        "runs_on": _runner_labels(workflow),
+        "uses": sorted(set(workflow.all_uses())),
     }
 
 

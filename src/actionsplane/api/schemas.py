@@ -134,6 +134,28 @@ class SimulationReportOut(BaseModel):
     samples: list[dict]
 
 
+class RadarEntryOut(BaseModel):
+    id: str
+    kind: str
+    target: str
+    replacement: str
+    deadline: str | None
+    days_until: int | None
+    status: str
+    reference: str
+    fix_operation: str | None
+    workflows: int
+    repos: int
+    fixable_repo_ids: list[int]
+    samples: list[dict]
+
+
+class RadarReportOut(BaseModel):
+    as_of: str
+    workflows_scanned: int
+    entries: list[RadarEntryOut]
+
+
 class TemplateOut(BaseModel):
     id: int
     name: str
