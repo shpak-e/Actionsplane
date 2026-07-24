@@ -120,6 +120,32 @@ export const BrandDrift = ({ size = 20, className }: IconProps) =>
     </>,
   );
 
+// Policy — rule sliders, one knob live in ember (the rule you're toggling).
+export const BrandPolicy = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <path d="M4 8h9M17 8h3" stroke="currentColor" strokeWidth="2" />
+      <circle cx="15" cy="8" r="2.3" fill="var(--accent)" />
+      <path d="M4 16h5M13 16h7" stroke="currentColor" strokeWidth="2" />
+      <circle cx="11" cy="16" r="2.3" stroke="currentColor" strokeWidth="2" />
+    </>,
+  );
+
+// Radar — concentric rings with an ember blip on the sweep (a deadline detected).
+export const BrandRadar = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 12 18.5 8" stroke="currentColor" strokeWidth="2" />
+      <circle cx="16.6" cy="8.6" r="1.9" fill="var(--accent)" />
+    </>,
+  );
+
 // Repos — the repository book with an ember node (the fleet, one repo lit).
 export const BrandRepos = ({ size = 20, className }: IconProps) =>
   brand(

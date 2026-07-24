@@ -125,6 +125,45 @@ export interface Mode {
   synced_at: string | null;
 }
 
+export interface RuleImpact {
+  rule: string;
+  workflows: number;
+  repos: number;
+  fix_operation: string | null;
+  fixable_repo_ids: number[];
+}
+
+export interface SimulationReport {
+  policy_rules: string[];
+  workflows_evaluated: number;
+  workflows_violating: number;
+  repos_violating: number;
+  by_rule: RuleImpact[];
+  samples: Array<Record<string, unknown>>;
+}
+
+export interface RadarEntry {
+  id: string;
+  kind: string;
+  target: string;
+  replacement: string;
+  deadline: string | null;
+  days_until: number | null;
+  status: string;
+  reference: string;
+  fix_operation: string | null;
+  workflows: number;
+  repos: number;
+  fixable_repo_ids: number[];
+  samples: Array<Record<string, unknown>>;
+}
+
+export interface RadarReport {
+  as_of: string;
+  workflows_scanned: number;
+  entries: RadarEntry[];
+}
+
 export interface CampaignTarget {
   id: number;
   repo_id: number;

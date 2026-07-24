@@ -8,9 +8,11 @@ import type {
   Metrics,
   Mode,
   PipelineGraph,
+  RadarReport,
   Repo,
   Run,
   Scorecard,
+  SimulationReport,
   Workflow,
 } from "./types";
 
@@ -91,7 +93,17 @@ export const api = {
   mode: () => get<Mode>("/mode"),
   offlineSync: () => post<Mode>("/offline/sync"),
   pipelines: () => get<PipelineGraph>("/pipelines"),
-  createCampaign: (body: { name: string; operation: string; repo_ids: number[] }) =>
-    post<Campaign>("/campaigns", body),
+  createCampaign: (body: {
+    name: string;
+    operation: string;
+    repo_ids: number[];
+    params?: Record<string, unknown> | null;
+  }) => post<Campaign>("/campaigns", body),
   applyCampaign: (id: number) => post<Campaign>(`/campaigns/${id}/apply`),
+  simulatePolicy: (body: {
+    require_sha_pinned: boolean;
+    disallowed_triggers: string[];
+    require_permissions: boolean;
+  }) => post<SimulationReport>("/policy/simulate", body),
+  radar: () => get<RadarReport>("/deprecations/radar"),
 };
