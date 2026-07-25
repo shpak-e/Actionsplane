@@ -20,6 +20,8 @@ import httpx
 from arq import cron
 from arq.connections import RedisSettings
 
+from actionsplane.audit.advisory_watch import advisory_rows, poll_advisories
+from actionsplane.audit.advisory_watch import scan_fleet as advisory_scan_fleet
 from actionsplane.audit.deprecation_radar import scan_fleet
 from actionsplane.audit.sarif_service import upload_repo_sarif
 from actionsplane.audit.service import audit_repo
@@ -36,6 +38,7 @@ from actionsplane.db.repository import (
     prune_run_payloads,
     record_write_audit,
     update_binding_drift,
+    upsert_advisories,
     upsert_installation,
     upsert_job,
     upsert_repo,
@@ -455,6 +458,55 @@ async def radar_alert_sweep(ctx: dict) -> int:
     return sent
 
 
+async def advisory_watch_sweep(ctx: dict) -> int:
+    """Cron task: poll GHSA for actions-ecosystem advisories, refresh the stored inventory, and
+    alert on any advisory that names an action a watched workflow uses.
+
+    The poll runs regardless of the notifications switch (it keeps the watch endpoint's data fresh);
+    a poll failure is non-fatal — the fleet scan falls back to the last-known advisories. Alerts are
+    gated on ``notifications_enabled`` and de-duped via the ledger so each (advisory, action) fires
+    once. Returns the number of alerts sent. GHSA's ``/advisories`` is public, so this works without
+    a GitHub App; when one is configured its JWT is used for a higher rate limit.
+    """
+    if not await _claim_sweep_lease("advisory_watch", ttl_seconds=3600):
+        return 0
+    settings = get_settings()
+    try:
+        token = app_jwt()
+    except RuntimeError:
+        token = None  # no App configured — GHSA is still reachable unauthenticated
+    async with get_sessionmaker()() as session:
+        try:
+            async with httpx.AsyncClient(timeout=30) as http:
+                records = await poll_advisories(http, base_url=settings.github_api_url, token=token)
+            if records:
+                await upsert_advisories(
+                    session, advisory_rows(records, fetched_at=datetime.now(UTC))
+                )
+                await session.commit()
+        except Exception:  # a poll failure must not sink the scan/alert of known advisories
+            log.exception("advisory poll failed; scanning last-known advisories")
+
+        report = await advisory_scan_fleet(session, as_of=datetime.now(UTC))
+        if not settings.notifications_enabled:
+            return 0
+        sent = 0
+        for e in report.entries:
+            patched = f" Patched: {e.first_patched}." if e.first_patched else ""
+            sent += await dispatch_once(
+                session,
+                f"advisory:{e.ghsa_id}:{e.package}",
+                "advisory.match",
+                title=f"Security advisory ({e.severity}): {e.package}",
+                body=f"{e.summary} Affects {e.workflows} workflow(s) in {e.repos} repo(s)."
+                f"{patched}",
+                link=e.url,
+            )
+    if sent:
+        log.info("advisory watch sweep sent %d advisory alert(s)", sent)
+    return sent
+
+
 async def _on_startup(ctx: dict) -> None:
     """Configure tracing once when the arq worker boots (so worker spans export too)."""
     setup_tracing("actionsplane-worker")
@@ -471,6 +523,9 @@ class WorkerSettings:
         cron(drift_sweep, hour=set(range(0, 24, 6)), minute={30}),  # every 6 h: drift sweep
         cron(prune_retention, hour={4}, minute={45}),  # daily: payload retention (Phase 5.6)
         cron(radar_alert_sweep, hour={6}, minute={15}),  # daily: deprecation-deadline alerts
+        cron(
+            advisory_watch_sweep, hour={6}, minute={45}
+        ),  # daily: GHSA advisory watch (roadmap #7)
     ]
 
     # Explicit runtime bounds (review 3, 4d): sweeps over many repos can run minutes, so give jobs

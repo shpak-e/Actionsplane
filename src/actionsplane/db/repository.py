@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from actionsplane.db.models import (
+    Advisory,
     AuditFinding,
     Campaign,
     CampaignFinding,
@@ -860,6 +861,28 @@ async def campaign_finding_details(session: AsyncSession, campaign_id: int) -> l
         }
         for r in rows
     ]
+
+
+async def upsert_advisories(session: AsyncSession, rows: list[dict]) -> int:
+    """Upsert polled GHSA advisories, keyed on ``(ghsa_id, package)``. Idempotent: a re-poll
+    refreshes mutable fields (severity/summary/patched/fetched_at) rather than duplicating. Returns
+    how many rows were written. ``rows`` are plain dicts matching the ``advisories`` columns."""
+    if not rows:
+        return 0
+    stmt = _conflict_insert(session)(Advisory).values(rows)
+    update_cols = {
+        c: stmt.excluded[c]
+        for c in ("severity", "summary", "url", "vulnerable_range", "first_patched", "fetched_at")
+    }
+    stmt = stmt.on_conflict_do_update(index_elements=["ghsa_id", "package"], set_=update_cols)
+    await session.execute(stmt)
+    return len(rows)
+
+
+async def list_advisories(session: AsyncSession) -> list[Advisory]:
+    """All stored advisories (the advisory-watch inventory), newest published first."""
+    stmt = select(Advisory).order_by(Advisory.published_at.desc(), Advisory.ghsa_id)
+    return list((await session.scalars(stmt)).all())
 
 
 async def list_notification_channels(

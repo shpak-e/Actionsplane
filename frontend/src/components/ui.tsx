@@ -150,6 +150,22 @@ export const BrandRadar = ({ size = 20, className }: IconProps) =>
     </>,
   );
 
+// Advisories — shield with an ember alert bar+dot (a disclosed vulnerability in a used action).
+export const BrandAdvisory = ({ size = 20, className }: IconProps) =>
+  brand(
+    size,
+    className,
+    <>
+      <path
+        d="M12 3 L19 5.8 V11 C19 15.4 16.1 18.4 12 20 C7.9 18.4 5 15.4 5 11 V5.8 Z"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+      <path d="M12 8 V12" stroke="var(--accent)" strokeWidth="2" />
+      <circle cx="12" cy="15" r="1.1" fill="var(--accent)" />
+    </>,
+  );
+
 // Repos — the repository book with an ember node (the fleet, one repo lit).
 export const BrandRepos = ({ size = 20, className }: IconProps) =>
   brand(

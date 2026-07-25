@@ -12,6 +12,7 @@ import { PipelinesTab } from "./components/PipelinesTab";
 import { CostTab } from "./components/CostTab";
 import { PolicyTab } from "./components/PolicyTab";
 import { RadarTab } from "./components/RadarTab";
+import { AdvisoriesTab } from "./components/AdvisoriesTab";
 import { CampaignsTab } from "./components/CampaignsTab";
 import { ActivityTab } from "./components/ActivityTab";
 import { SettingsTab } from "./components/SettingsTab";
@@ -20,6 +21,7 @@ import { SyncButton } from "./components/SyncButton";
 import { SettingsMenu } from "./components/SettingsMenu";
 import {
   BrandActivity,
+  BrandAdvisory,
   BrandCampaigns,
   BrandCost,
   BrandDrift,
@@ -48,6 +50,7 @@ type Tab =
   | "security"
   | "policy"
   | "radar"
+  | "advisories"
   | "drift"
   | "pipelines"
   | "cost"
@@ -72,12 +75,16 @@ export default function App() {
   const { data: scorecard } = useQuery({ queryKey: ["scorecard"], queryFn: api.scorecard });
   const { data: driftBindings } = useQuery({ queryKey: ["drift", null], queryFn: () => api.drift() });
   const { data: radar } = useQuery({ queryKey: ["radar"], queryFn: api.radar });
+  const { data: advisories } = useQuery({ queryKey: ["advisories"], queryFn: api.advisories });
 
   const driftCount = (driftBindings ?? []).filter(
     (b) => b.drift_severity && !["identical", "minor"].includes(b.drift_severity),
   ).length;
   const radarCount = (radar?.entries ?? []).filter(
     (e) => e.status === "overdue" || e.status === "urgent",
+  ).length;
+  const advisoryCount = (advisories?.entries ?? []).filter(
+    (e) => e.severity === "critical" || e.severity === "high",
   ).length;
 
   const tabs: RailTab<Tab>[] = [
@@ -125,6 +132,14 @@ export default function App() {
       group: "Audit",
       hint: "Upcoming GitHub deprecations you must migrate before a deadline",
       count: radarCount,
+    },
+    {
+      id: "advisories",
+      label: "Advisories",
+      icon: <BrandAdvisory size={22} />,
+      group: "Audit",
+      hint: "Security advisories (GHSA) affecting actions your fleet uses",
+      count: advisoryCount,
     },
     {
       id: "policy",
@@ -287,6 +302,7 @@ export default function App() {
             {tab === "security" && <SecurityTab repoId={repoId} onSelectRepo={selectRepo} />}
             {tab === "policy" && <PolicyTab />}
             {tab === "radar" && <RadarTab />}
+            {tab === "advisories" && <AdvisoriesTab />}
             {tab === "drift" && <DriftTab repoId={repoId} />}
             {tab === "pipelines" && <PipelinesTab />}
             {tab === "cost" && <CostTab />}

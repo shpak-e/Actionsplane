@@ -296,3 +296,27 @@ class NotificationSent(Base):
 
     event_key: Mapped[str] = mapped_column(String(255), primary_key=True)
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Advisory(Base):
+    """A GitHub security advisory (GHSA) for the ``actions`` ecosystem, polled from the global
+    advisory DB (roadmap #7). One row per ``(ghsa_id, package)`` — a single advisory can name
+    several affected actions, and the advisory-watch matcher joins ``package`` against the action
+    refs the fleet actually uses (``workflow_relations.descriptor['uses']``). Refreshed by the
+    daily ``advisory_watch_sweep``; ``fetched_at`` records the last poll that saw it."""
+
+    __tablename__ = "advisories"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    ghsa_id: Mapped[str] = mapped_column(String(64))  # e.g. GHSA-xxxx-xxxx-xxxx
+    package: Mapped[str] = mapped_column(String(255))  # affected action, owner/repo
+    severity: Mapped[str] = mapped_column(String(16))  # low | medium | high | critical
+    summary: Mapped[str] = mapped_column(String(512))
+    url: Mapped[str] = mapped_column(String(512))
+    vulnerable_range: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_patched: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (UniqueConstraint("ghsa_id", "package", name="uq_advisory_ghsa_package"),)
