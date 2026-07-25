@@ -24,6 +24,13 @@ name: release
 on:
   push:
     branches: [master]
+    # Don't rebuild+push images for docs-only changes (README, roadmap, banner, license) — nothing
+    # in the image changed. Code pushes and semver tags still build. Force one via workflow_dispatch.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/assets/**"
+      - "LICENSE"
     tags: ["v*.*.*"]
   workflow_dispatch: {}
 

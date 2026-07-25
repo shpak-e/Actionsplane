@@ -271,6 +271,20 @@ export interface CampaignTarget {
   error: string | null;
 }
 
+export interface CampaignRepoProgress {
+  repo_id: number;
+  repo: string | null;
+  targeted: number;
+  resolved: number;
+}
+
+export interface CampaignVerification {
+  targeted: number;
+  resolved: number;
+  by_repo: CampaignRepoProgress[];
+  by_type: Record<string, { targeted: number; resolved: number }>;
+}
+
 export interface Campaign {
   id: number;
   name: string;
@@ -278,6 +292,7 @@ export interface Campaign {
   status: string;
   created_at: string | null;
   targets: CampaignTarget[];
+  verification: CampaignVerification | null;
 }
 
 export interface CampaignSummary {
@@ -289,6 +304,8 @@ export interface CampaignSummary {
   targets: number;
   opened: number;
   errored: number;
+  targeted_findings: number;
+  resolved_findings: number;
 }
 
 export interface PipelineNode {

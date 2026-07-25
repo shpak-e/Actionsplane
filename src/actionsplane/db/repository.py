@@ -34,6 +34,7 @@ from sqlalchemy.orm import undefer
 from actionsplane.db.models import (
     AuditFinding,
     Campaign,
+    CampaignFinding,
     CampaignTarget,
     Installation,
     Lease,
@@ -692,6 +693,104 @@ async def campaign_target_counts(
     )
     rows = await session.execute(stmt)
     return {cid: (total, op, err) for cid, total, op, err in rows}
+
+
+async def snapshot_campaign_findings(
+    session: AsyncSession,
+    *,
+    campaign_id: int,
+    repo_ids: list[int],
+    finding_types: set[str],
+) -> int:
+    """Record the open findings this campaign's operation targets (the verified-closed snapshot).
+
+    Selects every currently-open finding in ``repo_ids`` whose type the operation is expected to
+    close, and stores its fingerprint against the campaign. Idempotent per (campaign, fingerprint).
+    Returns how many were snapshotted. No-op (0) if the operation isn't finding-backed.
+    """
+    if not repo_ids or not finding_types:
+        return 0
+    stmt = select(AuditFinding).where(
+        AuditFinding.resolved_at.is_(None),
+        AuditFinding.repo_id.in_(repo_ids),
+        AuditFinding.finding_type.in_(finding_types),
+    )
+    findings = list((await session.scalars(stmt)).all())
+    for f in findings:
+        session.add(
+            CampaignFinding(
+                campaign_id=campaign_id,
+                repo_id=f.repo_id,
+                fingerprint=f.fingerprint,
+                finding_type=f.finding_type,
+                severity=f.severity,
+            )
+        )
+    await session.flush()
+    return len(findings)
+
+
+async def campaign_verification(session: AsyncSession, campaign_id: int) -> dict:
+    """Verified-closed rollup: of the findings a campaign targeted, how many are now resolved.
+
+    Joins the snapshot fingerprints to the live ``audit_findings`` rows; a targeted finding counts
+    as closed when its row is now ``resolved_at``-stamped (the re-audit stopped seeing it). Returns
+    ``{targeted, resolved, by_repo: [...], by_type: {...}}`` — a zeroed rollup with ``targeted=0``
+    when the operation wasn't finding-backed (nothing snapshotted).
+    """
+    resolved_flag = case((AuditFinding.resolved_at.is_not(None), 1), else_=0)
+    stmt = (
+        select(
+            CampaignFinding.repo_id,
+            CampaignFinding.finding_type,
+            func.count().label("targeted"),
+            func.coalesce(func.sum(resolved_flag), 0).label("resolved"),
+        )
+        .join(AuditFinding, AuditFinding.fingerprint == CampaignFinding.fingerprint)
+        .where(CampaignFinding.campaign_id == campaign_id)
+        .group_by(CampaignFinding.repo_id, CampaignFinding.finding_type)
+    )
+    rows = list(await session.execute(stmt))
+    targeted = sum(r.targeted for r in rows)
+    resolved = sum(int(r.resolved) for r in rows)
+    by_repo: dict[int, dict[str, int]] = {}
+    by_type: dict[str, dict[str, int]] = {}
+    for r in rows:
+        rr = by_repo.setdefault(r.repo_id, {"targeted": 0, "resolved": 0})
+        rr["targeted"] += r.targeted
+        rr["resolved"] += int(r.resolved)
+        tt = by_type.setdefault(r.finding_type, {"targeted": 0, "resolved": 0})
+        tt["targeted"] += r.targeted
+        tt["resolved"] += int(r.resolved)
+    return {
+        "targeted": targeted,
+        "resolved": resolved,
+        "by_repo": [{"repo_id": rid, **v} for rid, v in by_repo.items()],
+        "by_type": by_type,
+    }
+
+
+async def campaign_verification_counts(
+    session: AsyncSession, campaign_ids: list[int]
+) -> dict[int, tuple[int, int]]:
+    """Per-campaign ``(targeted, resolved)`` finding counts in one grouped query (list view).
+
+    Campaigns whose operation wasn't finding-backed (nothing snapshotted) are simply absent.
+    """
+    if not campaign_ids:
+        return {}
+    resolved_flag = case((AuditFinding.resolved_at.is_not(None), 1), else_=0)
+    stmt = (
+        select(
+            CampaignFinding.campaign_id,
+            func.count().label("targeted"),
+            func.coalesce(func.sum(resolved_flag), 0).label("resolved"),
+        )
+        .join(AuditFinding, AuditFinding.fingerprint == CampaignFinding.fingerprint)
+        .where(CampaignFinding.campaign_id.in_(campaign_ids))
+        .group_by(CampaignFinding.campaign_id)
+    )
+    return {cid: (int(t), int(r)) for cid, t, r in await session.execute(stmt)}
 
 
 async def list_notification_channels(

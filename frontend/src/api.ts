@@ -128,6 +128,7 @@ export const api = {
   campaigns: () => get<CampaignSummary[]>("/campaigns"),
   campaign: (id: number) => get<Campaign>(`/campaigns/${id}`),
   applyCampaign: (id: number) => post<Campaign>(`/campaigns/${id}/apply`),
+  verifyCampaign: (id: number) => post<Campaign>(`/campaigns/${id}/verify`),
   simulatePolicy: (body: {
     require_sha_pinned: boolean;
     disallowed_triggers: string[];

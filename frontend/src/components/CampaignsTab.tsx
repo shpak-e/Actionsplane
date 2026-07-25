@@ -13,10 +13,11 @@ import {
   IconCheck,
   IconExternal,
   IconLayers,
+  IconRefresh,
   IconX,
   TableSkeleton,
 } from "./ui";
-import type { CampaignTarget } from "../types";
+import type { Campaign, CampaignTarget } from "../types";
 
 /** Map a campaign/target status onto an existing badge palette class. */
 function statusClass(status: string): string {
@@ -93,6 +94,73 @@ function TargetRow({ target, repoName }: { target: CampaignTarget; repoName: str
   );
 }
 
+/** Verified-closed panel: did the merged PRs actually resolve the findings the campaign targeted?
+ * Re-verify re-audits the target repos so the count reflects the current fleet state. */
+function VerifiedClosed({
+  v,
+  onVerify,
+  verifying,
+  canVerify,
+  error,
+}: {
+  v: NonNullable<Campaign["verification"]>;
+  onVerify: () => void;
+  verifying: boolean;
+  canVerify: boolean;
+  error: string | null;
+}) {
+  const pct = v.targeted > 0 ? Math.round((v.resolved / v.targeted) * 100) : 0;
+  const done = v.targeted > 0 && v.resolved === v.targeted;
+  return (
+    <div className={`card verified-panel${done ? " done" : ""}`}>
+      <div className="verified-head">
+        <div>
+          <div className="verified-title">
+            Verified closed{" "}
+            <span className="verified-count mono">
+              {v.resolved}/{v.targeted}
+            </span>
+          </div>
+          <div className="verified-sub">
+            findings this campaign targeted that a re-audit confirms are now resolved
+          </div>
+        </div>
+        <button
+          className="btn sm"
+          onClick={onVerify}
+          disabled={verifying || !canVerify}
+          title={canVerify ? "Re-audit the target repos and refresh the count" : "Set an operate token first"}
+        >
+          <IconRefresh size={13} /> {verifying ? "Re-auditing…" : "Re-verify"}
+        </button>
+      </div>
+      <div className="verified-bar">
+        <span style={{ width: `${pct}%` }} className={done ? "done" : ""} />
+      </div>
+      {error && (
+        <div className="toast err" style={{ marginTop: 8 }}>
+          <IconX /> {error}
+        </div>
+      )}
+      {v.by_repo.length > 1 && (
+        <div className="verified-repos">
+          {v.by_repo
+            .slice()
+            .sort((a, b) => b.targeted - a.targeted)
+            .map((r) => (
+              <div className="verified-repo" key={r.repo_id}>
+                <span className="mono muted">{r.repo ?? `#${r.repo_id}`}</span>
+                <span className={`mono ${r.resolved === r.targeted ? "ct-ok" : "subtle"}`}>
+                  {r.resolved}/{r.targeted}
+                </span>
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CampaignDetail({ id, onClose }: { id: number; onClose: () => void }) {
   const { byId } = useRepos();
   const qc = useQueryClient();
@@ -108,6 +176,15 @@ function CampaignDetail({ id, onClose }: { id: number; onClose: () => void }) {
       qc.invalidateQueries({ queryKey: ["campaign", id] });
       qc.invalidateQueries({ queryKey: ["campaigns"] });
       for (const k of ["findings", "scorecard", "drift"]) qc.invalidateQueries({ queryKey: [k] });
+    },
+  });
+
+  const verify = useMutation({
+    mutationFn: () => api.verifyCampaign(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["campaign", id] });
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+      for (const k of ["findings", "scorecard"]) qc.invalidateQueries({ queryKey: [k] });
     },
   });
 
@@ -173,6 +250,16 @@ function CampaignDetail({ id, onClose }: { id: number; onClose: () => void }) {
             </div>
           )}
 
+          {data.verification && (
+            <VerifiedClosed
+              v={data.verification}
+              onVerify={() => verify.mutate()}
+              verifying={verify.isPending}
+              canVerify={hasToken}
+              error={verify.isError ? (verify.error as Error).message : null}
+            />
+          )}
+
           <div className="campaign-target-list">
             {targets.map((t) => {
               const repo = byId.get(t.repo_id);
@@ -233,6 +320,7 @@ export function CampaignsTab() {
                 <th>Campaign</th>
                 <th>Operation</th>
                 <th>Targets</th>
+                <th>Verified closed</th>
                 <th>Status</th>
                 <th>Created</th>
               </tr>
@@ -248,6 +336,18 @@ export function CampaignsTab() {
                     {c.targets} repo{c.targets === 1 ? "" : "s"}
                     {c.opened > 0 && <span className="ct-ok mono"> · {c.opened} PR</span>}
                     {c.errored > 0 && <span className="ct-err mono"> · {c.errored} err</span>}
+                  </td>
+                  <td>
+                    {c.targeted_findings > 0 ? (
+                      <span
+                        className={`badge ${c.resolved_findings === c.targeted_findings ? "ok" : "neutral"}`}
+                        title="Findings resolved / targeted (verified by re-audit)"
+                      >
+                        {c.resolved_findings}/{c.targeted_findings} closed
+                      </span>
+                    ) : (
+                      <span className="subtle mono">—</span>
+                    )}
                   </td>
                   <td>
                     <span className={`badge ${statusClass(c.status)}`}>{statusLabel(c.status)}</span>

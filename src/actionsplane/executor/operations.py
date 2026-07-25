@@ -269,3 +269,15 @@ OPERATIONS: dict[str, Callable[..., EditResult]] = {
     "add-concurrency": add_concurrency,
     "sync-template": sync_to_template,
 }
+
+# Which audit finding types an operation is expected to close — the basis of the verified-closed
+# loop (D2/P1). When a fix campaign is created, the open findings of these types in its target repos
+# are snapshotted; after the PRs merge and the repo is re-audited, the ones now resolved are the
+# campaign's verified closures. Ops with no finding mapping (runner swaps, template sync) drive PRs
+# but aren't finding-backed, so they simply have no verification.
+OPERATION_FINDING_TYPES: dict[str, frozenset[str]] = {
+    "pin-shas": frozenset({"unpinned_action"}),
+    "set-permissions": frozenset({"missing_permissions", "broad_permissions"}),
+    "add-concurrency": frozenset({"missing_concurrency"}),
+    "bump-action-version": frozenset({"deprecated_action"}),
+}
