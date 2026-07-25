@@ -587,7 +587,7 @@ td.actions .btn, td.actions .icon-btn { margin-left: 4px; }
 /* ---------- campaigns tab ---------- */
 .campaign-detail-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 10px; font-size: 12.5px; }
 .campaign-target-list { display: flex; flex-direction: column; gap: 8px; }
-.campaign-target { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+.campaign-target { border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); overflow: hidden; }
 .campaign-target .ct-head { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; background: none; border: none; text-align: left; color: inherit; font: inherit; }
 .campaign-target .ct-head:hover { background: var(--surface-3); }
 .campaign-target .ct-repo { color: var(--fg); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -806,6 +806,9 @@ td.actions .btn, td.actions .icon-btn { margin-left: 4px; }
 .seg-btn:last-child { border-right: none; }
 .seg-btn:hover { background: var(--surface-3); color: var(--fg); }
 .seg-btn.active { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+/* The parent .seg has overflow:hidden, which clips the global 2px-offset focus outline; use an inset
+   ring on the button itself so keyboard focus stays visible on segmented controls. */
+.seg-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
 .cost-summary { display: flex; align-items: center; gap: 30px; padding: 16px 22px; margin-bottom: 16px; flex-wrap: wrap; }
 .cost-summary .cost-sort { margin-left: auto; }
 .cost-total { color: var(--fg); font-weight: 600; }
@@ -822,7 +825,7 @@ th.cost-tip-col, td.cost-tip-col { width: 34px; padding-right: 0; }
 .cost-row.has-tips:hover .cost-tip-btn { background: var(--surface-3); color: var(--fg); }
 .cost-tip-btn.warn { color: var(--warn, #d9a441); border-color: color-mix(in srgb, var(--warn, #d9a441) 40%, var(--border)); }
 .cost-tip-btn .gi.rot90 { transform: rotate(90deg); transition: transform 0.15s; }
-.cost-tips-row > td { padding: 0 14px 12px; background: var(--surface-1); }
+.cost-tips-row > td { padding: 0 14px 12px; background: var(--surface-2); }
 .cost-tips { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-left: 2px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0; }
 .cost-tip { display: flex; gap: 9px; font-size: 13px; line-height: 1.5; color: var(--fg-muted); }
 .cost-tip .cost-tip-ico { flex: none; margin-top: 2px; color: var(--fg-faint); }
@@ -832,7 +835,7 @@ th.cost-tip-col, td.cost-tip-col { width: 34px; padding-right: 0; }
 /* ---------- Activity feed (audit trail) ---------- */
 .activity-controls { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
 .activity-cats { flex-wrap: wrap; }
-.activity-search { flex: 1; min-width: 200px; max-width: 340px; margin-left: auto; }
+.activity-search { flex: 1; min-width: 200px; max-width: 340px; margin-left: auto; margin-top: 0; }
 .activity-feed { list-style: none; margin: 0; padding: 0; position: relative; }
 .activity-feed::before { content: ""; position: absolute; left: 5px; top: 4px; bottom: 4px; width: 2px; background: var(--border); }
 .activity-item { position: relative; display: flex; gap: 14px; padding: 9px 0 9px 22px; }
@@ -840,7 +843,7 @@ th.cost-tip-col, td.cost-tip-col { width: 34px; padding-right: 0; }
 .activity-item.cat-campaign .activity-dot { border-color: var(--accent); }
 .activity-item.cat-audit .activity-dot { border-color: var(--warn, #d9a441); }
 .activity-item.cat-governance .activity-dot { border-color: var(--ok); }
-.activity-item.cat-drift .activity-dot { border-color: #8b7cf6; }
+.activity-item.cat-drift .activity-dot { border-color: var(--purple); }
 .activity-main { min-width: 0; }
 .activity-line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .activity-action { font-weight: 600; color: var(--fg); font-size: 13.5px; }

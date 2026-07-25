@@ -56,7 +56,7 @@ export function NavRail<T extends string>({
         <button
           className={active === homeId ? "rail-home active" : "rail-home"}
           onClick={() => onSelect(homeId)}
-          aria-current={active === homeId}
+          aria-current={active === homeId ? "page" : undefined}
           title="Home — your customizable fleet overview"
         >
           <span className="rail-home-mark">
@@ -74,7 +74,7 @@ export function NavRail<T extends string>({
               <button
                 className={active === t.id ? "rail-btn active" : "rail-btn"}
                 onClick={() => onSelect(t.id)}
-                aria-current={active === t.id}
+                aria-current={active === t.id ? "page" : undefined}
                 title={t.hint ? `${t.label} — ${t.hint}` : t.label}
               >
                 {t.icon}

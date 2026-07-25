@@ -29,6 +29,25 @@ function ShaPinReadiness() {
   const unpinned = rule?.workflows ?? 0;
   const repos = rule?.repos ?? 0;
 
+  // On error, render a neutral note — never the green "all-clear", which would misread a failed
+  // check as "fully compliant".
+  if (q.isError) {
+    return (
+      <div className="card shapin-hero">
+        <div className="shapin-badge">
+          <IconShield size={20} />
+          <span>Enforceable today</span>
+        </div>
+        <div className="shapin-body">
+          <div className="shapin-headline">Couldn’t check SHA-pin readiness</div>
+          <p className="shapin-note">
+            The readiness scan failed to run. Use the simulator below, or retry.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`card shapin-hero${unpinned > 0 ? " at-risk" : " clear"}`}>
       <div className="shapin-badge">

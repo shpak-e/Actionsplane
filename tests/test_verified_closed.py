@@ -90,6 +90,20 @@ async def test_snapshot_noop_without_types(session):
     )
 
 
+async def test_snapshot_idempotent_on_second_call(session):
+    # A re-snapshot (e.g. a retry) must not raise on the unique constraint or double-count.
+    await snapshot_campaign_findings(
+        session, campaign_id=1, repo_ids=[10, 11], finding_types={"unpinned_action"}
+    )
+    await session.commit()
+    await snapshot_campaign_findings(
+        session, campaign_id=1, repo_ids=[10, 11], finding_types={"unpinned_action"}
+    )
+    await session.commit()
+    v = await campaign_verification(session, 1)
+    assert v["targeted"] == 3  # not 6 — the second snapshot was a no-op
+
+
 async def test_verification_counts_resolved_after_reaudit(session):
     await snapshot_campaign_findings(
         session, campaign_id=1, repo_ids=[10, 11], finding_types={"unpinned_action"}

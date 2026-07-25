@@ -67,10 +67,25 @@ services:
 
   api:
     image: ghcr.io/shpak-e/actionsplane-api:${ACTIONSPLANE_TAG:-edge}
+    restart: unless-stopped
     <<: *watch
     environment: *app-env
+    # Self-migrate before serving. The one-shot `migrate` covers the initial `up`, but Watchtower
+    # rolls this container to a new :edge WITHOUT re-running that one-shot — so a new image carrying
+    # a migration would start against an un-upgraded DB. Running `alembic upgrade head` here (a single
+    # api replica in this stack → no concurrent-migration race) closes that gap: the command is part
+    # of the container config, which Watchtower preserves across recreation. Idempotent (a no-op when
+    # already at head). k8s does NOT use this — Helm runs the migration as a pre-upgrade hook.
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && exec uvicorn actionsplane.api.app:app --host 0.0.0.0 --port 8000
+    # Loopback-only host binding: the frontend reaches the API over the internal Docker network
+    # (the actionsplane-api alias), so this published port is just for host-side debugging. Binding
+    # to 0.0.0.0 would expose the read model (repos, findings, pipeline graph) to the LAN, and in
+    # tokenless open mode that's real data. Front it with a reverse proxy for real remote access.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     networks:
       default:
         aliases:
@@ -83,10 +98,14 @@ services:
 
   ingestor:
     image: ghcr.io/shpak-e/actionsplane-ingestor:${ACTIONSPLANE_TAG:-edge}
+    restart: unless-stopped
     <<: *watch
     environment: *app-env
+    # Loopback-only host binding — GitHub webhooks reach the ingestor through a reverse proxy that
+    # terminates TLS and forwards over the Docker network, not this raw host port. Publish it wider
+    # only behind that proxy.
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -95,6 +114,7 @@ services:
 
   worker:
     image: ghcr.io/shpak-e/actionsplane-worker:${ACTIONSPLANE_TAG:-edge}
+    restart: unless-stopped
     <<: *watch
     environment: *app-env
     depends_on:
@@ -105,6 +125,7 @@ services:
 
   frontend:
     image: ghcr.io/shpak-e/actionsplane-frontend:${ACTIONSPLANE_TAG:-edge}
+    restart: unless-stopped
     <<: *watch
     ports:
       - "3001:80"
@@ -112,11 +133,18 @@ services:
       - api
 
   # Polls GHCR every 5 min and rolls any watched service whose tag moved (e.g. a new `:edge`).
-  # Mounts the Docker socket read-only where possible; it needs write to restart containers.
-  # nickfedor/watchtower is the actively-maintained fork — the original containrrr/watchtower is
-  # abandoned and pins Docker API 1.25, which modern daemons (min 1.40) reject.
+  # nickfedor/watchtower is the actively-maintained fork (the original containrrr/watchtower is
+  # abandoned and pins Docker API 1.25, which modern daemons reject). Pinned by digest: this
+  # container has full control of the Docker socket, so its own image is a supply-chain root — a
+  # floating :latest here would auto-adopt any future push. Re-pin deliberately when you bump it.
+  #
+  # SECURITY: the socket mount is read-WRITE (watchtower must restart containers — it cannot be
+  # :ro). That's root-equivalent control of the host daemon, and :edge images carry no attestation,
+  # so a compromised GHCR push would auto-execute here. For a hardened deploy either front the
+  # socket with a scoped socket-proxy, or set WATCHTOWER_MONITOR_ONLY=true (notify, don't auto-apply)
+  # and update by hand, or pin app images to signed release digests instead of :edge.
   watchtower:
-    image: nickfedor/watchtower:latest
+    image: nickfedor/watchtower:latest@sha256:7ddf47fa9e6fff4e971fd8f3fe24ab84dd31c0a48770a0a380e97b9a2ed475b0
     restart: unless-stopped
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"      # only touch services labelled above

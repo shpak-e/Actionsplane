@@ -490,6 +490,25 @@ async def count_open_findings(
     return int((await session.scalar(stmt)) or 0)
 
 
+async def workflow_ids_with_open_finding(session: AsyncSession, finding_type: str) -> set[int]:
+    """The distinct workflow ids that have an open finding of ``finding_type`` — unbounded.
+
+    Used where a capped ``open_findings`` page would silently drop workflows (e.g. the cost view's
+    add-concurrency advice must see every workflow that lacks a concurrency block, not a 1000-row
+    slice). Only non-null workflow ids are returned.
+    """
+    stmt = (
+        select(AuditFinding.workflow_id)
+        .where(
+            AuditFinding.resolved_at.is_(None),
+            AuditFinding.finding_type == finding_type,
+            AuditFinding.workflow_id.is_not(None),
+        )
+        .distinct()
+    )
+    return {wid for (wid,) in await session.execute(stmt)}
+
+
 async def count_open_findings_grouped(session: AsyncSession) -> list[tuple[str, str, int]]:
     """``(severity, finding_type, count)`` for all open findings — grouped in SQL (review 3, P1.4).
 
@@ -716,17 +735,26 @@ async def snapshot_campaign_findings(
         AuditFinding.finding_type.in_(finding_types),
     )
     findings = list((await session.scalars(stmt)).all())
-    for f in findings:
-        session.add(
-            CampaignFinding(
-                campaign_id=campaign_id,
-                repo_id=f.repo_id,
-                fingerprint=f.fingerprint,
-                finding_type=f.finding_type,
-                severity=f.severity,
-            )
-        )
-    await session.flush()
+    if not findings:
+        return 0
+    # Idempotent per (campaign, fingerprint) via the unique constraint — a re-snapshot (retry) skips
+    # rows already recorded rather than raising IntegrityError.
+    rows = [
+        {
+            "campaign_id": campaign_id,
+            "repo_id": f.repo_id,
+            "fingerprint": f.fingerprint,
+            "finding_type": f.finding_type,
+            "severity": f.severity,
+        }
+        for f in findings
+    ]
+    stmt = (
+        _conflict_insert(session)(CampaignFinding)
+        .values(rows)
+        .on_conflict_do_nothing(index_elements=["campaign_id", "fingerprint"])
+    )
+    await session.execute(stmt)
     return len(findings)
 
 
