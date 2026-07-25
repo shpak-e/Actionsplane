@@ -38,6 +38,8 @@ Existing tools each cover a fragment: scanners find problems in one repo, bots b
 
 **🔍 Audit** — workflows are parsed into a typed AST and checked continuously: unpinned actions, missing/over-broad `permissions:`, deprecated actions, missing `concurrency:`, unverified publishers. Findings have a lifecycle, roll up into a per-repo posture scorecard, and upload as SARIF to GitHub Code Scanning (resolved findings close their alerts).
 
+**🛡️ Advisory watch** — polls the GitHub Advisory Database (GHSA) for the `actions` ecosystem and joins it against the actions your fleet actually uses, so a newly-disclosed vulnerability in an action you depend on surfaces as a severity-ranked, per-repo impact list — and alerts your notification channels the first time it's seen.
+
 **📐 Drift** — register a canonical workflow template, bind repos to it, and get structural AST diffs (identical → minor → content → structural) instead of noisy text diffs. See exactly which of 120 repos diverged from the golden release workflow, and how badly.
 
 **🔧 Fix** — bulk **campaigns**: pick an operation (e.g. *pin every action to its commit SHA*), preview a per-repo **dry-run diff**, then apply — ActionsPlane opens a branch + PR per repo with comment- and format-preserving YAML edits (`ruamel` round-trip). Apply is double-gated (opt-in flag + operate token), reuses the dry-run-resolved SHAs so the reviewed diff is exactly what lands, and every write is recorded in an append-only audit log.

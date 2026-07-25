@@ -248,6 +248,28 @@ export interface RadarReport {
   entries: RadarEntry[];
 }
 
+export interface AdvisoryImpact {
+  ghsa_id: string;
+  package: string;
+  severity: string;
+  summary: string;
+  url: string;
+  vulnerable_range: string | null;
+  first_patched: string | null;
+  published_at: string | null;
+  workflows: number;
+  repos: number;
+  affected_repo_ids: number[];
+  samples: Array<Record<string, unknown>>;
+}
+
+export interface AdvisoryReport {
+  as_of: string;
+  advisories_known: number;
+  workflows_scanned: number;
+  entries: AdvisoryImpact[];
+}
+
 export interface RequireCheckResult {
   repo_id: number;
   repo: string | null;

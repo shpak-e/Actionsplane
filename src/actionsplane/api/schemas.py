@@ -207,6 +207,30 @@ class RadarReportOut(BaseModel):
     entries: list[RadarEntryOut]
 
 
+class AdvisoryImpactOut(BaseModel):
+    """One GHSA advisory that names an action the fleet uses (advisory watch, roadmap #7)."""
+
+    ghsa_id: str
+    package: str
+    severity: str
+    summary: str
+    url: str
+    vulnerable_range: str | None
+    first_patched: str | None
+    published_at: str | None
+    workflows: int
+    repos: int
+    affected_repo_ids: list[int]
+    samples: list[dict]
+
+
+class AdvisoryReportOut(BaseModel):
+    as_of: str
+    advisories_known: int  # total advisories in the stored inventory
+    workflows_scanned: int
+    entries: list[AdvisoryImpactOut]
+
+
 class SarifIngestIn(BaseModel):
     """A SARIF 2.1.0 document from an external scanner (zizmor/poutine/Scorecard) to ingest (D1)."""
 

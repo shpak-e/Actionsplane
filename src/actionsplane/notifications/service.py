@@ -157,6 +157,10 @@ EVENT_TYPES: dict[str, dict[str, str]] = {
         "label": "Workflow run failed",
         "description": "A watched workflow run concludes as a failure.",
     },
+    "advisory.match": {
+        "label": "Security advisory affects the fleet",
+        "description": "A GitHub security advisory names an action a watched workflow uses.",
+    },
 }
 
 KINDS = ("slack", "webhook", "email")

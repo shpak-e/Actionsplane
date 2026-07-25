@@ -25,6 +25,7 @@ from sse_starlette.sse import EventSourceResponse
 from actionsplane import __version__
 from actionsplane.api.auth import require_configured_operate, require_token
 from actionsplane.api.schemas import (
+    AdvisoryReportOut,
     AuditLogEntryOut,
     BindingCreate,
     BindingOut,
@@ -64,6 +65,7 @@ from actionsplane.api.schemas import (
     TemplateOut,
     WorkflowOut,
 )
+from actionsplane.audit.advisory_watch import scan_fleet as advisory_scan_fleet
 from actionsplane.audit.deprecation_radar import scan_fleet
 from actionsplane.audit.sarif_ingest_service import ingest_sarif
 from actionsplane.audit.sarif_service import upload_sarif_for_repo
@@ -755,6 +757,18 @@ async def deprecation_radar_endpoint(
     overdue/urgent first. Read-only — matches the curated feed against stored workflow facts."""
     report = await scan_fleet(session, as_of=date.today())
     return RadarReportOut(**asdict(report))
+
+
+@router.get("/advisories/watch", response_model=AdvisoryReportOut)
+async def advisory_watch_endpoint(
+    session: AsyncSession = Depends(get_session),
+) -> AdvisoryReportOut:
+    """Advisory watch (roadmap #7): which GHSA security advisories name an action the fleet uses,
+    most-severe first. Read-only — matches the polled advisory inventory against stored workflow
+    facts. The inventory is refreshed by the daily ``advisory_watch_sweep`` (empty until it runs).
+    """
+    report = await advisory_scan_fleet(session, as_of=datetime.now(UTC))
+    return AdvisoryReportOut(**asdict(report))
 
 
 @router.get("/templates", response_model=list[TemplateOut])

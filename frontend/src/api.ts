@@ -1,5 +1,6 @@
 import { getOperateToken } from "./lib/auth";
 import type {
+  AdvisoryReport,
   AuditLogEntry,
   Binding,
   Campaign,
@@ -161,6 +162,7 @@ export const api = {
     require_permissions: boolean;
   }) => post<SimulationReport>("/policy/simulate", body),
   radar: () => get<RadarReport>("/deprecations/radar"),
+  advisories: () => get<AdvisoryReport>("/advisories/watch"),
   requireCheck: (body: { check: string; repo_ids: number[] }) =>
     post<RequireCheckOut>("/governance/require-check", body),
   notificationEvents: () => get<NotificationEvent[]>("/notifications/events"),
