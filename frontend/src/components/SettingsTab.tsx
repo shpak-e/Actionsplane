@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { ReposTab } from "./ReposTab";
 import { NotificationsPanel } from "./NotificationsPanel";
-import { IconKey, IconShield } from "./ui";
+import { TokensPanel } from "./TokensPanel";
+import { IconShield } from "./ui";
 
 type Section = "notifications" | "repositories" | "access" | "users";
 
 const SECTIONS: { id: Section; label: string; hint: string }[] = [
   { id: "notifications", label: "Notifications", hint: "Slack, webhook & email alerts" },
   { id: "repositories", label: "Repositories", hint: "Repos ActionsPlane watches" },
-  { id: "access", label: "Access (OIDC)", hint: "Single sign-on" },
-  { id: "users", label: "Users", hint: "Team members & roles" },
+  { id: "users", label: "API access", hint: "Tokens & roles" },
+  { id: "access", label: "Single sign-on", hint: "OIDC (coming soon)" },
 ];
 
 /** A not-yet-wired settings section — honest about what it will configure once built. */
@@ -63,29 +64,18 @@ export function SettingsTab({ initialSection = "notifications" }: { initialSecti
         <div className="settings-body">
           {section === "notifications" && <NotificationsPanel />}
           {section === "repositories" && <ReposTab />}
+          {section === "users" && <TokensPanel />}
           {section === "access" && (
             <Placeholder icon={<IconShield size={30} />} title="Single sign-on (OIDC)">
               <p>
-                Today ActionsPlane authenticates writes with a single <strong>operate token</strong>{" "}
-                (set via the key icon, top-right). OIDC will let your team sign in with your identity
-                provider (Okta, Google Workspace, Entra ID, GitHub) instead of sharing a token.
+                Access is managed today with <strong>role-based API tokens</strong> (see{" "}
+                <strong>API access</strong>). OIDC will additionally let your team sign in with your
+                identity provider (Okta, Google Workspace, Entra ID, GitHub) instead of holding a
+                token.
               </p>
               <p className="subtle">
                 Planned configuration: issuer URL, client ID/secret, allowed domains, and a
-                group→role mapping. Track this in the roadmap under Access.
-              </p>
-            </Placeholder>
-          )}
-          {section === "users" && (
-            <Placeholder icon={<IconKey size={30} />} title="Users & roles">
-              <p>
-                Once single sign-on is enabled, invited members will appear here with roles —{" "}
-                <strong>viewer</strong> (read the dashboard), <strong>operator</strong> (open fix
-                PRs, run campaigns), and <strong>admin</strong> (manage settings and access).
-              </p>
-              <p className="subtle">
-                Until then, anyone with the operate token has operator access, and the read token (if
-                configured) grants view-only.
+                group→role mapping onto the same viewer/operator/admin roles.
               </p>
             </Placeholder>
           )}

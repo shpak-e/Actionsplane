@@ -23,9 +23,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from actionsplane import __version__
-from actionsplane.api.auth import require_configured_operate, require_token
+from actionsplane.api.auth import (
+    ROLES,
+    Identity,
+    generate_token,
+    require_admin,
+    require_configured_operate,
+    require_identity,
+    require_token,
+)
 from actionsplane.api.schemas import (
     AdvisoryReportOut,
+    ApiTokenCreate,
+    ApiTokenCreated,
+    ApiTokenOut,
     AuditLogEntryOut,
     BindingCreate,
     BindingOut,
@@ -41,6 +52,7 @@ from actionsplane.api.schemas import (
     FindingsPage,
     FleetCostOut,
     FleetCostRow,
+    IdentityOut,
     JobOut,
     MetricsOut,
     ModeOut,
@@ -79,9 +91,11 @@ from actionsplane.db.repository import (
     campaign_verification_counts,
     count_open_findings,
     count_open_findings_grouped,
+    create_api_token,
     create_binding,
     create_campaign,
     create_notification_channel,
+    delete_api_token,
     fleet_cost_records,
     get_campaign,
     get_notification_channel,
@@ -89,6 +103,7 @@ from actionsplane.db.repository import (
     get_repo_by_owner_name,
     latest_runs_for,
     list_all_workflows,
+    list_api_tokens,
     list_bindings,
     list_campaigns,
     list_failing_jobs,
@@ -769,6 +784,80 @@ async def advisory_watch_endpoint(
     """
     report = await advisory_scan_fleet(session, as_of=datetime.now(UTC))
     return AdvisoryReportOut(**asdict(report))
+
+
+# --- Access / RBAC (roadmap #10) -----------------------------------------------------------------
+
+
+def _token_out(t) -> ApiTokenOut:
+    return ApiTokenOut(
+        id=t.id,
+        name=t.name,
+        role=t.role,
+        prefix=t.prefix,
+        created_by=t.created_by,
+        created_at=t.created_at,
+    )
+
+
+@router.get("/access/me", response_model=IdentityOut)
+async def whoami_endpoint(identity: Identity = Depends(require_identity)) -> IdentityOut:
+    """The caller's own identity + role, so the UI can reflect what they're allowed to do."""
+    return IdentityOut(actor=identity.actor, role=identity.role)
+
+
+@router.get("/access/tokens", response_model=list[ApiTokenOut])
+async def list_tokens_endpoint(
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_admin),
+) -> list[ApiTokenOut]:
+    """List API tokens (admin only). Never returns a secret — only the non-secret prefix."""
+    return [_token_out(t) for t in await list_api_tokens(session)]
+
+
+@router.post("/access/tokens", response_model=ApiTokenCreated, status_code=201)
+async def create_token_endpoint(
+    body: ApiTokenCreate,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_admin),
+) -> ApiTokenCreated:
+    """Mint a named token with a role (admin only). The plaintext secret is returned once."""
+    if body.role not in ROLES:
+        raise HTTPException(422, f"role must be one of {', '.join(ROLES)}")
+    secret, token_hash, prefix = generate_token()
+    token = await create_api_token(
+        session,
+        name=body.name,
+        role=body.role,
+        token_hash=token_hash,
+        prefix=prefix,
+        created_by=actor,
+    )
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="token.create",
+        target=f"token:{token.id}",
+        detail={"name": body.name, "role": body.role},
+    )
+    await session.commit()
+    return ApiTokenCreated(token=_token_out(token), secret=secret)
+
+
+@router.delete("/access/tokens/{token_id}")
+async def delete_token_endpoint(
+    token_id: int,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_admin),
+) -> dict:
+    """Revoke a token by id (admin only)."""
+    if not await delete_api_token(session, token_id):
+        raise HTTPException(404, "token not found")
+    await record_write_audit(
+        session, actor=actor, action="token.revoke", target=f"token:{token_id}"
+    )
+    await session.commit()
+    return {"status": "revoked", "token_id": token_id}
 
 
 @router.get("/templates", response_model=list[TemplateOut])

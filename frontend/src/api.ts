@@ -1,6 +1,8 @@
 import { getOperateToken } from "./lib/auth";
 import type {
   AdvisoryReport,
+  ApiToken,
+  ApiTokenCreated,
   AuditLogEntry,
   Binding,
   Campaign,
@@ -8,6 +10,7 @@ import type {
   DriftDetail,
   Finding,
   FleetCost,
+  Identity,
   Job,
   Metrics,
   Mode,
@@ -163,6 +166,12 @@ export const api = {
   }) => post<SimulationReport>("/policy/simulate", body),
   radar: () => get<RadarReport>("/deprecations/radar"),
   advisories: () => get<AdvisoryReport>("/advisories/watch"),
+  me: () => get<Identity>("/access/me"),
+  apiTokens: () => get<ApiToken[]>("/access/tokens"),
+  createApiToken: (body: { name: string; role: string }) =>
+    post<ApiTokenCreated>("/access/tokens", body),
+  deleteApiToken: (id: number) =>
+    del<{ status: string; token_id: number }>(`/access/tokens/${id}`),
   requireCheck: (body: { check: string; repo_ids: number[] }) =>
     post<RequireCheckOut>("/governance/require-check", body),
   notificationEvents: () => get<NotificationEvent[]>("/notifications/events"),

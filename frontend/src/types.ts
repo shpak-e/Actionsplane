@@ -270,6 +270,25 @@ export interface AdvisoryReport {
   entries: AdvisoryImpact[];
 }
 
+export interface Identity {
+  actor: string;
+  role: string;
+}
+
+export interface ApiToken {
+  id: number;
+  name: string;
+  role: string;
+  prefix: string;
+  created_by: string | null;
+  created_at: string | null;
+}
+
+export interface ApiTokenCreated {
+  token: ApiToken;
+  secret: string;
+}
+
 export interface RequireCheckResult {
   repo_id: number;
   repo: string | null;

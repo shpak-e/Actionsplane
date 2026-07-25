@@ -350,6 +350,28 @@ select.input {
   text-transform: none; letter-spacing: 0; transition: border-color 0.15s;
 }
 select.input:hover { border-color: var(--fg-subtle); }
+input.input {
+  background: var(--surface-2); color: var(--fg); border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm); padding: 7px 10px; font-size: 13px; font-family: var(--mono);
+  transition: border-color 0.15s;
+}
+input.input:focus { outline: none; border-color: var(--accent); }
+
+/* ---------- API tokens (RBAC) ---------- */
+.token-create { padding: 14px 16px; margin-bottom: 16px; }
+.token-create-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.token-create-row input.input { flex: 1 1 220px; min-width: 0; }
+.token-list { display: flex; flex-direction: column; gap: 10px; }
+.token-secret {
+  border: 1px solid var(--ok); border-radius: var(--r-sm); padding: 10px 12px;
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+.token-secret-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ok); }
+.token-secret-value { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.token-secret-value code {
+  flex: 1; overflow-x: auto; white-space: nowrap; padding: 6px 8px; font-size: 12px;
+  background: var(--surface-3); border-radius: var(--r-sm); color: var(--fg);
+}
 
 .filter-chip {
   display: inline-flex; align-items: center; gap: 7px; margin-top: 6px;

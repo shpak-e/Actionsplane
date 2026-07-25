@@ -33,6 +33,7 @@ from sqlalchemy.orm import undefer
 
 from actionsplane.db.models import (
     Advisory,
+    ApiToken,
     AuditFinding,
     Campaign,
     CampaignFinding,
@@ -883,6 +884,53 @@ async def list_advisories(session: AsyncSession) -> list[Advisory]:
     """All stored advisories (the advisory-watch inventory), newest published first."""
     stmt = select(Advisory).order_by(Advisory.published_at.desc(), Advisory.ghsa_id)
     return list((await session.scalars(stmt)).all())
+
+
+async def create_api_token(
+    session: AsyncSession,
+    *,
+    name: str,
+    role: str,
+    token_hash: str,
+    prefix: str,
+    created_by: str | None,
+) -> ApiToken:
+    """Insert a named API token (RBAC). Only the hash is stored; the caller shows the secret."""
+    token = ApiToken(
+        name=name,
+        role=role,
+        token_hash=token_hash,
+        prefix=prefix,
+        created_by=created_by,
+        created_at=datetime.now(UTC),
+    )
+    session.add(token)
+    await session.flush()
+    return token
+
+
+async def list_api_tokens(session: AsyncSession) -> list[ApiToken]:
+    """All API tokens, newest first (never includes the secret — only prefix/role/metadata)."""
+    stmt = select(ApiToken).order_by(ApiToken.created_at.desc(), ApiToken.id.desc())
+    return list((await session.scalars(stmt)).all())
+
+
+async def get_api_token_by_hash(session: AsyncSession, token_hash: str) -> ApiToken | None:
+    """Look a presented token up by its SHA-256 hash (the auth path)."""
+    return (
+        await session.scalars(select(ApiToken).where(ApiToken.token_hash == token_hash))
+    ).first()
+
+
+async def count_api_tokens(session: AsyncSession) -> int:
+    """How many API tokens exist — lets auth tell 'open mode' from 'configured, deny'."""
+    return int((await session.scalar(select(func.count()).select_from(ApiToken))) or 0)
+
+
+async def delete_api_token(session: AsyncSession, token_id: int) -> bool:
+    """Revoke (delete) a token by id. Returns True if a row was removed."""
+    result = await session.execute(delete(ApiToken).where(ApiToken.id == token_id))
+    return bool(result.rowcount)
 
 
 async def list_notification_channels(

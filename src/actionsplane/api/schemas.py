@@ -14,6 +14,43 @@ from pydantic import BaseModel, field_validator
 _OPERATION_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
+class IdentityOut(BaseModel):
+    """Who the caller is, for the UI to reflect their role (RBAC, roadmap #10)."""
+
+    actor: str
+    role: str
+
+
+class ApiTokenOut(BaseModel):
+    """A named API token, minus its secret (only a non-secret prefix is ever returned)."""
+
+    id: int
+    name: str
+    role: str
+    prefix: str
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+class ApiTokenCreate(BaseModel):
+    name: str
+    role: str
+
+    @field_validator("name")
+    @classmethod
+    def _name_nonempty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("token name is required")
+        return v.strip()[:255]
+
+
+class ApiTokenCreated(BaseModel):
+    """The create response: the stored metadata plus the plaintext secret, shown exactly once."""
+
+    token: ApiTokenOut
+    secret: str
+
+
 class RepoOut(BaseModel):
     id: int
     owner: str
