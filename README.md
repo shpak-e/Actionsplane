@@ -46,6 +46,8 @@ Existing tools each cover a fragment: scanners find problems in one repo, bots b
 
 **✅ Verified-closed** — a campaign doesn't just open PRs, it **proves the fix landed**. At create it snapshots the findings it targets; after the PRs merge, re-auditing the repos confirms which are actually resolved — the campaign reports *"resolved 41/47"* with a per-repo breakdown, so you can see fleet posture move, not just PR counts. **Export evidence** downloads a tamper-evident compliance bundle (printable HTML report + machine-readable JSON + SHA-256 manifest) for any campaign.
 
+**🔑 Roles & access** — role-based access control with named API tokens: **viewer** (read-only), **operator** (run campaigns, apply fixes), **admin** (manage tokens). Admins mint scoped, revocable tokens from the UI (the secret is shown once; only its hash is stored), and every mutation records *which* token performed it. The legacy env tokens still work (`ACTIONSPLANE_API_TOKEN` = admin, `ACTIONSPLANE_API_READ_TOKEN` = viewer); OIDC/SSO maps onto the same roles later.
+
 **No GitHub App? Offline mode** pulls workflows/runs for any list of public repos over the public API — full dashboard, no webhooks. And `actionsplane audit local .` scans a local checkout as a CI gate (non-zero exit on findings).
 
 ## Quickstart

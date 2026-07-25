@@ -298,6 +298,26 @@ class NotificationSent(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ApiToken(Base):
+    """A named API token with a role (RBAC, roadmap #10). The token secret is never stored — only
+    its SHA-256 hash (``token_hash``, unique) — so a leaked DB row can't be replayed; ``prefix`` is
+    a short non-secret fragment shown in the UI to tell tokens apart. ``role`` is one of
+    viewer/operator/admin. These sit alongside the legacy env tokens (``ACTIONSPLANE_API_TOKEN`` →
+    admin, ``ACTIONSPLANE_API_READ_TOKEN`` → viewer), which keep working unchanged."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(16))  # viewer | operator | admin
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    prefix: Mapped[str] = mapped_column(String(16))  # non-secret display fragment
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Advisory(Base):
     """A GitHub security advisory (GHSA) for the ``actions`` ecosystem, polled from the global
     advisory DB (roadmap #7). One row per ``(ghsa_id, package)`` — a single advisory can name
