@@ -1,9 +1,10 @@
 <div align="center">
 
-# ActionsPlane
+<img src=".github/assets/banner.svg" alt="ActionsPlane — the fleet control plane for GitHub Actions" width="100%">
 
-**The fleet control plane for GitHub Actions.**
-Observe, audit, and fix workflows across hundreds of repositories — from one self-hosted UI, API, and CLI.
+<br>
+
+**Observe, audit, and fix GitHub Actions across hundreds of repositories — from one self-hosted UI, API, and CLI.**
 Every fix ships as a reviewable pull request.
 
 [![CI](https://github.com/shpak-e/Actionsplane/actions/workflows/ci.yml/badge.svg)](https://github.com/shpak-e/Actionsplane/actions/workflows/ci.yml)
