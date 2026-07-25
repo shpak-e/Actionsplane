@@ -30,8 +30,10 @@ from actionsplane.api.schemas import (
     BindingOut,
     CampaignCreate,
     CampaignOut,
+    CampaignRepoProgress,
     CampaignSummaryOut,
     CampaignTargetOut,
+    CampaignVerification,
     CostSuggestionOut,
     DriftDetailOut,
     FindingOut,
@@ -66,10 +68,13 @@ from actionsplane.audit.deprecation_radar import scan_fleet
 from actionsplane.audit.sarif_ingest_service import ingest_sarif
 from actionsplane.audit.sarif_service import upload_sarif_for_repo
 from actionsplane.audit.scorecard import build_scorecard
+from actionsplane.audit.service import audit_repo
 from actionsplane.config import get_settings
 from actionsplane.db.base import get_session, get_sessionmaker
 from actionsplane.db.repository import (
     campaign_target_counts,
+    campaign_verification,
+    campaign_verification_counts,
     count_open_findings,
     count_open_findings_grouped,
     create_binding,
@@ -98,6 +103,7 @@ from actionsplane.db.repository import (
     open_findings,
     record_write_audit,
     set_repo_watched,
+    snapshot_campaign_findings,
     upsert_installation,
     upsert_template,
 )
@@ -106,8 +112,9 @@ from actionsplane.events import subscribe
 from actionsplane.events.bus import SubscriberLimit
 from actionsplane.executor.actions import rerun_run
 from actionsplane.executor.campaigns import apply_campaign, run_dry_run
-from actionsplane.executor.operations import OPERATIONS
+from actionsplane.executor.operations import OPERATION_FINDING_TYPES, OPERATIONS
 from actionsplane.github.client import GitHubClient
+from actionsplane.github.factory import TokenCache, app_jwt, client_for_installation
 from actionsplane.governance.service import require_check_fleet
 from actionsplane.metrics import summarize_runs
 from actionsplane.metrics.compute import percentile
@@ -799,6 +806,7 @@ async def add_binding(
 
 async def _campaign_out(session: AsyncSession, campaign) -> CampaignOut:
     targets = await list_targets(session, campaign_id=campaign.id)
+    verification = await _campaign_verification_out(session, campaign.id)
     return CampaignOut(
         id=campaign.id,
         name=campaign.name,
@@ -806,6 +814,32 @@ async def _campaign_out(session: AsyncSession, campaign) -> CampaignOut:
         status=campaign.status,
         created_at=campaign.created_at,
         targets=[CampaignTargetOut.model_validate(t, from_attributes=True) for t in targets],
+        verification=verification,
+    )
+
+
+async def _campaign_verification_out(
+    session: AsyncSession, campaign_id: int
+) -> CampaignVerification | None:
+    """Build the verified-closed rollup for a campaign, resolving repo names. ``None`` when the
+    campaign's operation isn't finding-backed (nothing was snapshotted)."""
+    v = await campaign_verification(session, campaign_id)
+    if v["targeted"] == 0:
+        return None
+    repos = {r.id: f"{r.owner}/{r.name}" for r in await list_repos(session, watched_only=False)}
+    return CampaignVerification(
+        targeted=v["targeted"],
+        resolved=v["resolved"],
+        by_repo=[
+            CampaignRepoProgress(
+                repo_id=p["repo_id"],
+                repo=repos.get(p["repo_id"]),
+                targeted=p["targeted"],
+                resolved=p["resolved"],
+            )
+            for p in v["by_repo"]
+        ],
+        by_type=v["by_type"],
     )
 
 
@@ -816,10 +850,13 @@ async def list_campaigns_endpoint(
 ) -> list[CampaignSummaryOut]:
     """All campaigns newest-first, with per-campaign target counts (for the Campaigns tab list)."""
     campaigns = await list_campaigns(session, limit=limit)
-    counts = await campaign_target_counts(session, [c.id for c in campaigns])
+    ids = [c.id for c in campaigns]
+    counts = await campaign_target_counts(session, ids)
+    verified = await campaign_verification_counts(session, ids)
     out: list[CampaignSummaryOut] = []
     for c in campaigns:
         total, opened, errored = counts.get(c.id, (0, 0, 0))
+        targeted, resolved = verified.get(c.id, (0, 0))
         out.append(
             CampaignSummaryOut(
                 id=c.id,
@@ -830,6 +867,8 @@ async def list_campaigns_endpoint(
                 targets=total,
                 opened=opened,
                 errored=errored,
+                targeted_findings=targeted,
+                resolved_findings=resolved,
             )
         )
     return out
@@ -851,6 +890,14 @@ async def create_campaign_endpoint(
         params=body.params,
         repo_ids=body.repo_ids,
         created_by="api",
+    )
+    # Verified-closed snapshot: record the open findings this operation is meant to close, so we can
+    # later prove how many the merged PRs actually resolved (not just that PRs opened).
+    await snapshot_campaign_findings(
+        session,
+        campaign_id=campaign.id,
+        repo_ids=body.repo_ids,
+        finding_types=set(OPERATION_FINDING_TYPES.get(body.operation, frozenset())),
     )
     await record_write_audit(
         session,
@@ -903,6 +950,49 @@ async def get_campaign_endpoint(
     campaign = await get_campaign(session, campaign_id)
     if campaign is None:
         raise HTTPException(404, "campaign not found")
+    return await _campaign_out(session, campaign)
+
+
+@router.post("/campaigns/{campaign_id}/verify", response_model=CampaignOut)
+async def verify_campaign_endpoint(
+    campaign_id: int,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> CampaignOut:
+    """Re-audit the campaign's target repos and return the refreshed verified-closed rollup.
+
+    This is the "did the fix actually land?" action: after the campaign's PRs merge, re-auditing the
+    repos re-resolves the findings that are now gone, and the snapshot→findings join reflects it as
+    "resolved N/M". Operator-gated (it re-audits real repos via the GitHub App)."""
+    campaign = await get_campaign(session, campaign_id)
+    if campaign is None:
+        raise HTTPException(404, "campaign not found")
+
+    targets = await list_targets(session, campaign_id=campaign.id)
+    audited, errors = 0, []
+    jwt = app_jwt()
+    async with httpx.AsyncClient(timeout=30) as http:
+        cache: TokenCache = {}
+        for target in targets:
+            repo = await get_repo(session, target.repo_id)
+            if repo is None:
+                continue
+            try:
+                gh = await client_for_installation(
+                    repo.installation_id, http=http, jwt=jwt, token_cache=cache
+                )
+                await audit_repo(session, gh, repo)
+                audited += 1
+            except Exception as exc:  # one repo failing shouldn't abort the verify sweep
+                errors.append(f"{repo.owner}/{repo.name}: {str(exc)[:200]}")
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="campaign.verify",
+        target=f"campaign:{campaign.id}",
+        detail={"repos_audited": audited, "errors": errors},
+    )
+    await session.commit()
     return await _campaign_out(session, campaign)
 
 

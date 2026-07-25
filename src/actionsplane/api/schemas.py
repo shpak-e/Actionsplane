@@ -311,6 +311,23 @@ class CampaignTargetOut(BaseModel):
     error: str | None
 
 
+class CampaignRepoProgress(BaseModel):
+    repo_id: int
+    repo: str | None = None
+    targeted: int
+    resolved: int
+
+
+class CampaignVerification(BaseModel):
+    """Verified-closed rollup (D2/P1): of the findings this campaign targeted, how many a re-audit
+    has since confirmed resolved. ``targeted == 0`` means the operation isn't finding-backed."""
+
+    targeted: int
+    resolved: int
+    by_repo: list[CampaignRepoProgress] = []
+    by_type: dict[str, dict[str, int]] = {}
+
+
 class CampaignOut(BaseModel):
     id: int
     name: str
@@ -318,6 +335,7 @@ class CampaignOut(BaseModel):
     status: str
     created_at: datetime | None = None
     targets: list[CampaignTargetOut] = []
+    verification: CampaignVerification | None = None
 
 
 class CampaignSummaryOut(BaseModel):
@@ -331,6 +349,8 @@ class CampaignSummaryOut(BaseModel):
     targets: int  # total target repos
     opened: int  # targets that reached an opened PR
     errored: int  # targets that failed
+    targeted_findings: int = 0  # findings the op set out to close (verified-closed loop)
+    resolved_findings: int = 0  # …of those, how many a re-audit has confirmed resolved
 
 
 class NotificationChannelIn(BaseModel):

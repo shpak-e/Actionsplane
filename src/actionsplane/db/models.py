@@ -185,6 +185,30 @@ class CampaignTarget(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class CampaignFinding(Base):
+    """A finding a campaign set out to close — snapshot at campaign-create time (verified-closed,
+    D2/P1). The campaign records the fingerprints of the open findings its operation targets; after
+    its PRs merge and the repo is re-audited, a targeted finding whose ``audit_findings`` row is now
+    ``resolved_at``-stamped counts as verified-closed. That join is how the campaign shows
+    "resolved 41/47" — proof the fix actually landed, not just that a PR opened."""
+
+    __tablename__ = "campaign_findings"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"))
+    repo_id: Mapped[int] = mapped_column(ForeignKey("repos.id"))
+    # The targeted finding's stable fingerprint (audit_findings.fingerprint). Not an FK: a finding
+    # row could in principle be pruned, and we still want the snapshot to survive for the count.
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    finding_type: Mapped[str] = mapped_column(String(64))
+    severity: Mapped[str] = mapped_column(String(16))
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "fingerprint", name="uq_campaign_fingerprint"),
+    )
+
+
 class WorkflowRelation(Base):
     """Per-workflow cross-workflow relation facts (triggers/calls/emits), persisted during a
     sweep so the Pipelines graph builds without re-fetching files. One row per (repo, path)."""
