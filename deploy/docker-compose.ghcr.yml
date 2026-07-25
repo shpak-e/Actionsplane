@@ -113,14 +113,16 @@ services:
 
   # Polls GHCR every 5 min and rolls any watched service whose tag moved (e.g. a new `:edge`).
   # Mounts the Docker socket read-only where possible; it needs write to restart containers.
+  # nickfedor/watchtower is the actively-maintained fork — the original containrrr/watchtower is
+  # abandoned and pins Docker API 1.25, which modern daemons (min 1.40) reject.
   watchtower:
-    image: containrrr/watchtower:latest
+    image: nickfedor/watchtower:latest
     restart: unless-stopped
     environment:
       WATCHTOWER_LABEL_ENABLE: "true"      # only touch services labelled above
       WATCHTOWER_CLEANUP: "true"           # prune the old image after a successful pull
       WATCHTOWER_POLL_INTERVAL: "300"      # seconds
-      WATCHTOWER_ROLLING_RESTART: "true"   # restart one at a time, not all at once
+      # NB: no WATCHTOWER_ROLLING_RESTART — it's incompatible with depends_on chains (frontend→api).
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
