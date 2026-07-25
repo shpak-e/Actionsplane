@@ -42,7 +42,7 @@ Existing tools each cover a fragment: scanners find problems in one repo, bots b
 
 **🔧 Fix** — bulk **campaigns**: pick an operation (e.g. *pin every action to its commit SHA*), preview a per-repo **dry-run diff**, then apply — ActionsPlane opens a branch + PR per repo with comment- and format-preserving YAML edits (`ruamel` round-trip). Apply is double-gated (opt-in flag + operate token), reuses the dry-run-resolved SHAs so the reviewed diff is exactly what lands, and every write is recorded in an append-only audit log.
 
-**✅ Verified-closed** — a campaign doesn't just open PRs, it **proves the fix landed**. At create it snapshots the findings it targets; after the PRs merge, re-auditing the repos confirms which are actually resolved — the campaign reports *"resolved 41/47"* with a per-repo breakdown, so you can see fleet posture move, not just PR counts.
+**✅ Verified-closed** — a campaign doesn't just open PRs, it **proves the fix landed**. At create it snapshots the findings it targets; after the PRs merge, re-auditing the repos confirms which are actually resolved — the campaign reports *"resolved 41/47"* with a per-repo breakdown, so you can see fleet posture move, not just PR counts. **Export evidence** downloads a tamper-evident compliance bundle (printable HTML report + machine-readable JSON + SHA-256 manifest) for any campaign.
 
 **No GitHub App? Offline mode** pulls workflows/runs for any list of public repos over the public API — full dashboard, no webhooks. And `actionsplane audit local .` scans a local checkout as a CI gate (non-zero exit on findings).
 

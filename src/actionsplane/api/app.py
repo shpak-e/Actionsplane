@@ -16,7 +16,7 @@ from dataclasses import asdict
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,6 +129,7 @@ from actionsplane.offline.sync import OFFLINE_INSTALLATION_ID, sync_repo
 from actionsplane.policy import Policy
 from actionsplane.policy.service import simulate_policy
 from actionsplane.relations import build_pipeline_graph
+from actionsplane.reporting import build_campaign_evidence, evidence_zip
 
 log = logging.getLogger(__name__)
 
@@ -976,6 +977,38 @@ async def get_campaign_endpoint(
     if campaign is None:
         raise HTTPException(404, "campaign not found")
     return await _campaign_out(session, campaign)
+
+
+@router.get("/campaigns/{campaign_id}/export")
+async def export_campaign_evidence_endpoint(
+    campaign_id: int,
+    session: AsyncSession = Depends(get_session),
+    actor: str = Depends(require_configured_operate),
+) -> Response:
+    """Download a compliance evidence bundle (zip) for a campaign.
+
+    The zip holds a printable ``report.html``, a machine-readable ``evidence.json``, and a SHA-256
+    ``manifest.txt`` — proof of what the campaign targeted and what a re-audit confirms it resolved.
+    Operator-gated and audit-logged: pulling evidence is itself a recorded compliance action."""
+    campaign = await get_campaign(session, campaign_id)
+    if campaign is None:
+        raise HTTPException(404, "campaign not found")
+    bundle = await build_campaign_evidence(session, campaign, generated_at=datetime.now(UTC))
+    data = evidence_zip(bundle)
+    await record_write_audit(
+        session,
+        actor=actor,
+        action="campaign.export",
+        target=f"campaign:{campaign.id}",
+        detail={"targeted": bundle.targeted, "resolved": bundle.resolved, "bytes": len(data)},
+    )
+    await session.commit()
+    filename = f"campaign-{campaign.id}-evidence.zip"
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/campaigns/{campaign_id}/verify", response_model=CampaignOut)

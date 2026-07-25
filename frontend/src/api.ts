@@ -73,6 +73,30 @@ async function patch<T>(path: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * Fetch a binary attachment and trigger a browser download. Unlike `get`, this reads the response
+ * as a blob (not JSON) and honours the server's `Content-Disposition` filename, falling back to
+ * `fallbackName`. Reuses `authHeaders()` so it works when the server has a token configured.
+ */
+async function download(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.detail || `${res.status} ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const name = /filename="?([^"]+)"?/.exec(cd)?.[1] || fallbackName;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function del<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: authHeaders() });
   if (!res.ok) {
@@ -129,6 +153,8 @@ export const api = {
   campaign: (id: number) => get<Campaign>(`/campaigns/${id}`),
   applyCampaign: (id: number) => post<Campaign>(`/campaigns/${id}/apply`),
   verifyCampaign: (id: number) => post<Campaign>(`/campaigns/${id}/verify`),
+  exportCampaignEvidence: (id: number) =>
+    download(`/campaigns/${id}/export`, `campaign-${id}-evidence.zip`),
   simulatePolicy: (body: {
     require_sha_pinned: boolean;
     disallowed_triggers: string[];

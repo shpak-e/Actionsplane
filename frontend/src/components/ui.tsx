@@ -63,6 +63,8 @@ export const IconMoon = ({ size = 15, className }: IconProps) =>
   svg(size, className, <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />);
 export const IconZap = ({ size = 14, className }: IconProps) =>
   svg(size, className, <path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z" />);
+export const IconDownload = ({ size = 13, className }: IconProps) =>
+  svg(size, className, <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5M12 15V3" /></>);
 
 /* ---------- brand toolbar icons ----------
    Bespoke geometric glyphs in the logo-studies language: grey geometry + a single ember accent

@@ -11,6 +11,7 @@ import {
   ExternalLink,
   IconArrowRight,
   IconCheck,
+  IconDownload,
   IconExternal,
   IconLayers,
   IconRefresh,
@@ -188,6 +189,8 @@ function CampaignDetail({ id, onClose }: { id: number; onClose: () => void }) {
     },
   });
 
+  const exportEvidence = useMutation({ mutationFn: () => api.exportCampaignEvidence(id) });
+
   const targets = data?.targets ?? [];
   const ready = targets.filter((t) => t.status === "dry-run-ok" && t.diff_preview && !t.pr_url);
   const opened = targets.filter((t) => t.pr_url);
@@ -210,6 +213,18 @@ function CampaignDetail({ id, onClose }: { id: number; onClose: () => void }) {
         </div>
         {data && (
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              className="btn sm"
+              disabled={!hasToken || exportEvidence.isPending}
+              onClick={() => exportEvidence.mutate()}
+              title={
+                hasToken
+                  ? "Download a compliance evidence bundle (HTML + JSON + SHA-256 manifest)"
+                  : "Set an operate token first"
+              }
+            >
+              <IconDownload size={13} /> {exportEvidence.isPending ? "Preparing…" : "Export evidence"}
+            </button>
             <span className="subtle mono" style={{ fontSize: 11 }}>
               {relativeTime(data.created_at)}
             </span>
@@ -217,6 +232,11 @@ function CampaignDetail({ id, onClose }: { id: number; onClose: () => void }) {
           </div>
         )}
       </div>
+      {exportEvidence.isError && (
+        <div className="toast err">
+          <IconX /> {(exportEvidence.error as Error).message}
+        </div>
+      )}
 
       {isError ? (
         <ErrorBanner error={error} />

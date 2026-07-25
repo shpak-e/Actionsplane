@@ -821,6 +821,47 @@ async def campaign_verification_counts(
     return {cid: (int(t), int(r)) for cid, t, r in await session.execute(stmt)}
 
 
+async def campaign_finding_details(session: AsyncSession, campaign_id: int) -> list[dict]:
+    """Per-finding rows for a campaign's targeted findings — the evidence-export detail.
+
+    Joins the create-time snapshot to the live ``audit_findings`` row (same join the verified-closed
+    rollup uses, so counts agree) and returns one dict per targeted finding with its live path/ref/
+    message and resolution state. Ordered resolved-last so an export lists what's still open first.
+    """
+    stmt = (
+        select(
+            CampaignFinding.repo_id,
+            CampaignFinding.fingerprint,
+            CampaignFinding.finding_type,
+            CampaignFinding.severity,
+            AuditFinding.path,
+            AuditFinding.ref,
+            AuditFinding.message,
+            AuditFinding.first_seen_at,
+            AuditFinding.resolved_at,
+        )
+        .join(AuditFinding, AuditFinding.fingerprint == CampaignFinding.fingerprint)
+        .where(CampaignFinding.campaign_id == campaign_id)
+        .order_by(AuditFinding.resolved_at.is_(None).desc(), CampaignFinding.repo_id)
+    )
+    rows = await session.execute(stmt)
+    return [
+        {
+            "repo_id": r.repo_id,
+            "fingerprint": r.fingerprint,
+            "finding_type": r.finding_type,
+            "severity": r.severity,
+            "path": r.path,
+            "ref": r.ref,
+            "message": r.message,
+            "first_seen_at": r.first_seen_at,
+            "resolved_at": r.resolved_at,
+            "resolved": r.resolved_at is not None,
+        }
+        for r in rows
+    ]
+
+
 async def list_notification_channels(
     session: AsyncSession, *, enabled_only: bool = False
 ) -> list[NotificationChannel]:
