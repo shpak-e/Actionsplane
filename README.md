@@ -42,6 +42,8 @@ Existing tools each cover a fragment: scanners find problems in one repo, bots b
 
 **🔧 Fix** — bulk **campaigns**: pick an operation (e.g. *pin every action to its commit SHA*), preview a per-repo **dry-run diff**, then apply — ActionsPlane opens a branch + PR per repo with comment- and format-preserving YAML edits (`ruamel` round-trip). Apply is double-gated (opt-in flag + operate token), reuses the dry-run-resolved SHAs so the reviewed diff is exactly what lands, and every write is recorded in an append-only audit log.
 
+**✅ Verified-closed** — a campaign doesn't just open PRs, it **proves the fix landed**. At create it snapshots the findings it targets; after the PRs merge, re-auditing the repos confirms which are actually resolved — the campaign reports *"resolved 41/47"* with a per-repo breakdown, so you can see fleet posture move, not just PR counts.
+
 **No GitHub App? Offline mode** pulls workflows/runs for any list of public repos over the public API — full dashboard, no webhooks. And `actionsplane audit local .` scans a local checkout as a CI gate (non-zero exit on findings).
 
 ## Quickstart
@@ -100,13 +102,13 @@ read-only containers, default-deny NetworkPolicies, Redis auth, ingress TLS, two
 
 ## How it's built
 
-FastAPI + SQLAlchemy (async) + Postgres + Redis/arq worker; React + Vite + TanStack Query frontend with SSE live updates; Typer CLI; optional OpenTelemetry tracing end-to-end. ~240 hermetic tests incl. hypothesis property tests on the YAML-edit engine.
+FastAPI + SQLAlchemy (async) + Postgres + Redis/arq worker; React + Vite + TanStack Query frontend with SSE live updates; Typer CLI; optional OpenTelemetry tracing end-to-end. 340+ hermetic tests incl. hypothesis property tests on the YAML-edit engine.
 
 **Design principles:** GitHub App, never PATs · webhooks first, polling only as reconciliation · **all edits via PRs**, never a direct push · AST, not regex — edits preserve comments and formatting · fail-closed write gates · self-hosted, no SaaS dependency.
 
 ## Project status & roadmap
 
-v1 feature-complete and hardened in a local sandbox; **live validation against a real GitHub org is the current milestone**. After that: a policy-readiness simulator for GitHub's new enforcement knobs, deprecation-radar migration campaigns, lockfile campaigns, and zizmor-orchestrated fix campaigns.
+v1 feature-complete and hardened in a local sandbox, with live validation against a real GitHub org proven end-to-end. Recent work: the **verified-closed loop** (campaigns prove their fixes landed), a fleet **Cost/time** view with optimization advice, a **SHA-pin readiness** lane, an in-app **Activity** trail, **Drift → template-sync** campaigns, notifications (Slack/webhook/email), and a GHCR image pipeline with auto-reload. Next: continuous advisory watch, consumer-graph/blast-radius incident mode, and compliance evidence export.
 
 ## Contributing
 
