@@ -69,7 +69,7 @@ function TargetRow({ target, repoName }: { target: CampaignTarget; repoName: str
         className="ct-head"
         onClick={() => hasDiff && setOpen((o) => !o)}
         style={{ cursor: hasDiff ? "pointer" : "default" }}
-        aria-expanded={open}
+        aria-expanded={hasDiff ? open : undefined}
       >
         <span className="mono ct-repo">{repoName}</span>
         <span className="ct-right">

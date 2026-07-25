@@ -70,9 +70,10 @@ async def test_fleet_cost_records_derives_durations(session):
 
 
 async def test_fleet_endpoint_ranks_by_compute(session):
-    from actionsplane.api.app import fleet_cost_metrics
+    from actionsplane.api import app as api_app
 
-    out = await fleet_cost_metrics(days=30, limit=50, session=session)
+    api_app._fleet_cost_cache.clear()  # module-global TTL cache — isolate from other tests
+    out = await api_app.fleet_cost_metrics(days=30, limit=50, session=session)
     assert out.window_days == 30
     assert out.total_minutes == pytest.approx((120 + 600) / 60, abs=0.05)
     # Deploy (600s) ranks above CI (120s)

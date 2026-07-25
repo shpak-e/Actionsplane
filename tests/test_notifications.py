@@ -92,13 +92,20 @@ async def test_dispatch_is_noop_when_globally_disabled(session, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_send_slack_and_webhook_payloads():
+async def test_send_slack_and_webhook_payloads(monkeypatch):
     seen: dict = {}
+
+    async def fake_resolve(host: str) -> str:
+        return "93.184.216.34"  # skip real DNS; pinning connects here
+
+    monkeypatch.setattr(service, "_resolve_public_ip", fake_resolve)
 
     def handler(req: httpx.Request) -> httpx.Response:
         import json
 
-        seen[str(req.url)] = json.loads(req.content)
+        # The connection is pinned to the IP, but the Host header stays on the real hostname.
+        assert req.url.host == "93.184.216.34"
+        seen[req.headers["Host"]] = json.loads(req.content)
         return httpx.Response(200, json={"ok": True})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -107,8 +114,8 @@ async def test_send_slack_and_webhook_payloads():
             "https://example.com/hook", "run.failed", "Title", "Body", "https://pr", http
         )
 
-    assert seen["https://hooks.slack.com/abc"] == {"text": "*Title*\nBody"}
-    wh = seen["https://example.com/hook"]
+    assert seen["hooks.slack.com"] == {"text": "*Title*\nBody"}
+    wh = seen["example.com"]
     assert wh["event"] == "run.failed" and wh["url"] == "https://pr"
     assert wh["source"] == "actionsplane"
 
@@ -198,18 +205,18 @@ def test_validate_destination_format():
 
 
 @pytest.mark.asyncio
-async def test_assert_public_url_blocks_internal_targets():
-    # literal IPs → no real DNS lookup
+async def test_resolve_public_ip_blocks_internal_targets():
+    # literal IPs → getaddrinfo returns them verbatim, no real DNS lookup
     for bad in (
-        "http://127.0.0.1:8080/x",  # loopback
-        "http://169.254.169.254/latest/meta-data/",  # cloud metadata / link-local
-        "http://10.0.0.5/hook",  # private
-        "http://192.168.1.1/",  # private
+        "127.0.0.1",  # loopback
+        "169.254.169.254",  # cloud metadata / link-local
+        "10.0.0.5",  # private
+        "192.168.1.1",  # private
     ):
         with pytest.raises(ValueError, match=r"non-public|resolve"):
-            await service._assert_public_url(bad)
-    # a public literal IP passes
-    await service._assert_public_url("https://8.8.8.8/hook")
+            await service._resolve_public_ip(bad)
+    # a public literal IP passes and is returned for pinning
+    assert await service._resolve_public_ip("8.8.8.8") == "8.8.8.8"
 
 
 @pytest.mark.asyncio

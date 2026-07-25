@@ -39,6 +39,12 @@ export function CostTab() {
   // how many carry a warn-level one (failing / queuing) — the headline "there's money on the table".
   const withTips = rows.filter((r) => r.suggestions.length > 0);
   const warnCount = rows.filter((r) => r.suggestions.some((s) => s.severity === "warn")).length;
+  // Newest run across the fleet — independent of the active sort (rows[0] is the sort leader, not
+  // necessarily the most recent).
+  const lastRunAt = rows.reduce<string | null>(
+    (acc, r) => (r.last_run_at && (!acc || r.last_run_at > acc) ? r.last_run_at : acc),
+    null,
+  );
 
   function toggle(id: number) {
     setExpanded((prev) => {
@@ -205,8 +211,7 @@ export function CostTab() {
           </table>
           <p className="subtle" style={{ fontSize: 11.5, marginTop: 8 }}>
             “Compute” is the sum of run durations (a proxy for billed minutes; actual cost depends on
-            runner size/OS). The bar reflects the active sort. Last run:{" "}
-            {relativeTime(rows[0]?.last_run_at)}.
+            runner size/OS). The bar reflects the active sort. Last run: {relativeTime(lastRunAt)}.
           </p>
         </div>
       )}

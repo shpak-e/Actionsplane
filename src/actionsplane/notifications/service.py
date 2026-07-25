@@ -18,7 +18,7 @@ import smtplib
 import socket
 from email.message import EmailMessage
 from email.policy import default as default_email_policy
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,8 +40,9 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 def validate_destination(kind: str, config: dict) -> None:
     """Sync format check for a channel destination. Raises ``ValueError`` on anything malformed.
-    (The IP-range SSRF check is done at send time — see ``_assert_public_url`` — to also cover the
-    resolve-just-before-connect window.)"""
+    (The DNS-based IP-range SSRF check runs at send time in ``_pinned_post``/``_resolve_public_ip``,
+    which resolves and connects to a *pinned* public IP so a rebind can't slip past between the
+    check and the connect.)"""
     cfg = config or {}
     if kind == "email":
         to = str(cfg.get("to", "")).strip()
@@ -81,18 +82,50 @@ def _is_public(ip_str: str) -> bool:
     )
 
 
-async def _assert_public_url(url: str) -> None:
-    """Resolve the host; reject if any address is non-public (SSRF). Raises ``ValueError``."""
-    host = urlsplit(url).hostname
-    if not host:
-        raise ValueError("URL has no host")
+async def _resolve_public_ip(host: str) -> str:
+    """Resolve ``host``, require every address be public, and return one to connect to.
+
+    Returning the vetted IP (rather than just asserting) is what closes the DNS-rebinding TOCTOU:
+    the caller connects to *this* address, so a low-TTL name can't answer public here and an
+    internal address at httpx's own connect. Raises ``ValueError`` if unresolvable or non-public.
+    """
     loop = asyncio.get_running_loop()
     try:
         infos = await loop.getaddrinfo(host, None)
     except socket.gaierror as exc:
         raise ValueError(f"cannot resolve destination host {host!r}") from exc
-    if not all(_is_public(info[4][0]) for info in infos):
+    ips = [info[4][0] for info in infos]
+    if not ips:
+        raise ValueError(f"cannot resolve destination host {host!r}")
+    if not all(_is_public(ip) for ip in ips):
         raise ValueError("destination resolves to a non-public address (blocked)")
+    return ips[0]
+
+
+async def _pinned_post(http: httpx.AsyncClient, url: str, *, json: dict) -> httpx.Response:
+    """POST ``json`` to ``url``, but connect to a pre-validated pinned IP (SSRF-safe).
+
+    We resolve + vet the host once, then rewrite the URL to the vetted IP so the actual TCP connect
+    can't be rebound to an internal address between the check and the connect. TLS SNI + certificate
+    verification and the ``Host`` header stay on the original hostname (``sni_hostname``), so
+    Slack/webhook endpoints still see a valid request. Redirects are not followed (client is created
+    with ``follow_redirects=False``), so a 3xx can't escape the pin to an unvetted host.
+    """
+    parts = urlsplit(url)
+    host = parts.hostname
+    if not host:
+        raise ValueError("URL has no host")
+    ip = await _resolve_public_ip(host)
+    netloc = f"[{ip}]" if ":" in ip else ip  # bracket IPv6 literals
+    if parts.port:
+        netloc += f":{parts.port}"
+    pinned_url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    request = http.build_request("POST", pinned_url, json=json)
+    request.headers["Host"] = host  # route/authenticate on the real hostname, not the IP
+    request.extensions = {**request.extensions, "sni_hostname": host}  # TLS SNI + cert host
+    resp = await http.send(request)
+    resp.raise_for_status()
+    return resp
 
 
 def safe_error(exc: Exception) -> str:
@@ -130,18 +163,16 @@ KINDS = ("slack", "webhook", "email")
 
 
 async def _send_slack(url: str, title: str, body: str, http: httpx.AsyncClient) -> None:
-    resp = await http.post(url, json={"text": f"*{title}*\n{body}"})
-    resp.raise_for_status()
+    await _pinned_post(http, url, json={"text": f"*{title}*\n{body}"})
 
 
 async def _send_webhook(
     url: str, event_type: str, title: str, body: str, link: str | None, http: httpx.AsyncClient
 ) -> None:
-    payload = {"source": "actionsplane", "event": event_type, "title": title, "body": body}
+    payload: dict = {"source": "actionsplane", "event": event_type, "title": title, "body": body}
     if link:
         payload["url"] = link
-    resp = await http.post(url, json=payload)
-    resp.raise_for_status()
+    await _pinned_post(http, url, json=payload)
 
 
 def _smtp_send(to: str, subject: str, body: str) -> None:
@@ -174,13 +205,10 @@ async def _deliver(
     """Send one message to one channel. Raises on failure (caller decides whether to swallow)."""
     cfg = channel.config or {}
     if channel.kind == "slack":
-        url = str(cfg.get("url", ""))
-        await _assert_public_url(url)
-        await _send_slack(url, title, body, http)
+        # _pinned_post resolves + vets the host and connects to the pinned IP (SSRF-safe).
+        await _send_slack(str(cfg.get("url", "")), title, body, http)
     elif channel.kind == "webhook":
-        url = str(cfg.get("url", ""))
-        await _assert_public_url(url)
-        await _send_webhook(url, event_type, title, body, link, http)
+        await _send_webhook(str(cfg.get("url", "")), event_type, title, body, link, http)
     elif channel.kind == "email":
         subject = f"[ActionsPlane] {title}"
         text = f"{body}\n\n{link}" if link else body

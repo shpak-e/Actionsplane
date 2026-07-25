@@ -106,6 +106,7 @@ from actionsplane.db.repository import (
     snapshot_campaign_findings,
     upsert_installation,
     upsert_template,
+    workflow_ids_with_open_finding,
 )
 from actionsplane.drift.binding_service import drift_detail
 from actionsplane.events import subscribe
@@ -391,6 +392,14 @@ async def get_workflow_metrics(
     return MetricsOut(**asdict(summarize_runs(records)))
 
 
+# Keyed TTL cache for the fleet cost rollup (review: /metrics/fleet loads every run in the window
+# fleet-wide and computes percentiles in Python — expensive, and the dashboard polls it). One
+# result per (days, limit) window per TTL; shares the pipelines TTL knob. The lock collapses a
+# thundering herd on expiry to a single rebuild.
+_fleet_cost_cache: dict[tuple[int, int], tuple[float, object]] = {}
+_fleet_cost_lock = asyncio.Lock()
+
+
 @router.get("/metrics/fleet", response_model=FleetCostOut)
 async def fleet_cost_metrics(
     days: int = Query(30, ge=1, le=365),
@@ -398,19 +407,35 @@ async def fleet_cost_metrics(
     session: AsyncSession = Depends(get_session),
 ) -> FleetCostOut:
     """Fleet cost/time rollup: per-workflow total run-minutes (the compute-cost proxy), run count,
-    failures, p95 duration and queue time over the last ``days`` — ranked most-expensive first."""
+    failures, p95 duration and queue time over the last ``days`` — ranked most-expensive first.
+    Cached for a short TTL (the rollup scans the window's runs fleet-wide)."""
+    ttl = get_settings().pipelines_cache_ttl_seconds
+    key = (days, limit)
+    if ttl > 0 and key in _fleet_cost_cache:
+        at, value = _fleet_cost_cache[key]
+        if time.monotonic() - at < ttl:
+            return value  # type: ignore[return-value]
+    async with _fleet_cost_lock:
+        if ttl > 0 and key in _fleet_cost_cache:  # a concurrent request may have just rebuilt it
+            at, value = _fleet_cost_cache[key]
+            if time.monotonic() - at < ttl:
+                return value  # type: ignore[return-value]
+        result = await _build_fleet_cost(session, days, limit)
+        if ttl > 0:
+            _fleet_cost_cache[key] = (time.monotonic(), result)
+        return result
+
+
+async def _build_fleet_cost(session: AsyncSession, days: int, limit: int) -> FleetCostOut:
     since = datetime.now(UTC) - timedelta(days=days)
     records = await fleet_cost_records(session, since=since)
     workflows = {w.id: w for w in await list_all_workflows(session)}
     repos = {r.id: f"{r.owner}/{r.name}" for r in await list_repos(session, watched_only=False)}
 
     # Workflows with an open "missing concurrency" finding lack a concurrency: block, so the queue
-    # advice can offer the one-click add-concurrency fix only where it would actually apply.
-    no_concurrency = {
-        f.workflow_id
-        for f in await open_findings(session, finding_type="missing_concurrency")
-        if f.workflow_id is not None
-    }
+    # advice can offer the one-click add-concurrency fix only where it applies. Unbounded
+    # (a capped findings page would wrongly treat overflow workflows as already-concurrent).
+    no_concurrency = await workflow_ids_with_open_finding(session, "missing_concurrency")
 
     by_wf: dict[int, list[dict]] = defaultdict(list)
     for rec in records:
@@ -970,21 +995,30 @@ async def verify_campaign_endpoint(
 
     targets = await list_targets(session, campaign_id=campaign.id)
     audited, errors = 0, []
-    jwt = app_jwt()
+    try:
+        jwt = app_jwt()
+    except RuntimeError as exc:  # GitHub App not configured — needs it (match sibling 503s)
+        raise HTTPException(503, str(exc)) from exc
+    # Each target gets its OWN session (mirrors the worker's audit sweep): audit_repo writes then
+    # commits, so a DB error on one repo would otherwise poison the shared request transaction and
+    # abort every later target + the audit-log write. A fresh session per repo also means the pooled
+    # connection isn't held across this repo's GitHub I/O.
+    maker = get_sessionmaker()
     async with httpx.AsyncClient(timeout=30) as http:
         cache: TokenCache = {}
         for target in targets:
-            repo = await get_repo(session, target.repo_id)
-            if repo is None:
-                continue
             try:
-                gh = await client_for_installation(
-                    repo.installation_id, http=http, jwt=jwt, token_cache=cache
-                )
-                await audit_repo(session, gh, repo)
+                async with maker() as s:
+                    repo = await get_repo(s, target.repo_id)
+                    if repo is None:
+                        continue
+                    gh = await client_for_installation(
+                        repo.installation_id, http=http, jwt=jwt, token_cache=cache
+                    )
+                    await audit_repo(s, gh, repo)
                 audited += 1
             except Exception as exc:  # one repo failing shouldn't abort the verify sweep
-                errors.append(f"{repo.owner}/{repo.name}: {str(exc)[:200]}")
+                errors.append(f"repo {target.repo_id}: {str(exc)[:200]}")
     await record_write_audit(
         session,
         actor=actor,

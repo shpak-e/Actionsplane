@@ -166,7 +166,9 @@ export function ActivityTab() {
                   <div className="activity-meta">
                     <span className="activity-actor">{e.actor}</span>
                     <span className="activity-sep">·</span>
-                    <time title={e.occurred_at}>{relativeTime(e.occurred_at)}</time>
+                    <time dateTime={e.occurred_at} title={e.occurred_at}>
+                      {relativeTime(e.occurred_at)}
+                    </time>
                     {pr && (
                       <>
                         <span className="activity-sep">·</span>
